@@ -287,3 +287,7 @@ Adds admin controls to remove or restore user access from the Roles tab, send pa
 ## Phase 7B Hotfix: Unassigned User Empty Dashboard
 
 Members with no assigned events can now log in and see a helpful empty dashboard instead of being blocked by an error. Admins can tag the user's login email in an event's Participants tab to grant access to that event.
+
+## Phase 7C: Access Permissions Hotfix
+
+This update makes Event setup and Participant management available only to Admin and Finance users. Members can still view participants and event details, but cannot add participants or change event setup. Backend permissions enforce the same rule.

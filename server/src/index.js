@@ -542,6 +542,7 @@ app.get('/api/health', (req, res) => {
     userAccessControl: 'enabled',
     passwordReset: 'enabled',
     unassignedMemberEmptyState: 'enabled',
+    financeParticipantEventManagement: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -834,7 +835,7 @@ app.put('/api/event', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const nextEvent = {
@@ -878,7 +879,7 @@ app.post('/api/participants', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const participant = {
@@ -905,7 +906,7 @@ app.put('/api/participants/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const participant = requireExistingItem(findById(activeEvent.participants, req.params.id), 'Participant');
@@ -935,7 +936,7 @@ app.delete('/api/participants/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const participant = requireExistingItem(findById(activeEvent.participants, req.params.id), 'Participant');

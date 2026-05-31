@@ -568,14 +568,39 @@ function Dashboard({ data }) {
   );
 }
 
-function EventSetup({ data, reload, setToast }) {
+function EventSetup({ data, reload, setToast, canManageEventSetup }) {
   const [form, setForm] = useState(data.event);
+
+  useEffect(() => {
+    setForm(data.event);
+  }, [data.event?.id, data.event?.name, data.event?.date, data.event?.location, data.event?.estimatedBudget, data.event?.currency, data.event?.settlementDeadline]);
 
   async function saveEvent(event) {
     event.preventDefault();
     await api('/event', { method: 'PUT', body: JSON.stringify(form) });
     setToast('Event updated. Civilization survives another form submission.');
     reload();
+  }
+
+  if (!canManageEventSetup) {
+    return (
+      <Section title="Event setup" icon={CalendarDays}>
+        <EmptyState
+          title="Event setup is read-only for members"
+          body="Finance and Admin users can change outing details. Members can view the event information without accidentally rearranging the universe."
+        />
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <ReadOnlyField label="Event name" value={data.event.name} />
+          <ReadOnlyField label="Date" value={data.event.date} />
+          <ReadOnlyField label="Location" value={data.event.location} />
+          <ReadOnlyField label="Estimated budget" value={money(data.event.estimatedBudget, data.event.currency)} />
+          <ReadOnlyField label="Currency" value={data.event.currency} />
+          <ReadOnlyField label="Settlement deadline" value={data.event.settlementDeadline || 'Not set'} />
+          <ReadOnlyField label="Organizer name" value={data.event.organizer?.name || 'Not set'} />
+          <ReadOnlyField label="Organizer email" value={data.event.organizer?.email || 'Not set'} />
+        </div>
+      </Section>
+    );
   }
 
   return (
@@ -597,6 +622,14 @@ function EventSetup({ data, reload, setToast }) {
   );
 }
 
+function ReadOnlyField({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 font-semibold text-slate-900">{value || 'Not set'}</p>
+    </div>
+  );
+}
 
 function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
   const [form, setForm] = useState({
@@ -734,13 +767,14 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
   );
 }
 
-function Participants({ data, reload, setToast }) {
+function Participants({ data, reload, setToast, canManageParticipants }) {
   const [form, setForm] = useState({ name: '', emailOrPhone: '', attendanceStatus: 'attending' });
   const [editingId, setEditingId] = useState('');
   const [editForm, setEditForm] = useState({ name: '', emailOrPhone: '', attendanceStatus: 'attending', paymentStatus: 'pending' });
   const [busy, setBusy] = useState(false);
 
   function startEdit(participant) {
+    if (!canManageParticipants) return;
     setEditingId(participant.id);
     setEditForm({
       name: participant.name || '',
@@ -752,6 +786,7 @@ function Participants({ data, reload, setToast }) {
 
   async function addParticipant(event) {
     event.preventDefault();
+    if (!canManageParticipants) return;
     setBusy(true);
     try {
       await api('/participants', { method: 'POST', body: JSON.stringify(form) });
@@ -767,6 +802,7 @@ function Participants({ data, reload, setToast }) {
 
   async function saveParticipant(event) {
     event.preventDefault();
+    if (!canManageParticipants) return;
     setBusy(true);
     try {
       await api(`/participants/${editingId}`, { method: 'PUT', body: JSON.stringify(editForm) });
@@ -781,6 +817,7 @@ function Participants({ data, reload, setToast }) {
   }
 
   async function deleteParticipant(id) {
+    if (!canManageParticipants) return;
     if (!window.confirm('Remove this participant? This is blocked if they are linked to expenses.')) return;
     setBusy(true);
     try {
@@ -796,16 +833,25 @@ function Participants({ data, reload, setToast }) {
 
   return (
     <Section title="Participants" icon={Users}>
-      <form onSubmit={addParticipant} className="mb-5 grid gap-3 md:grid-cols-[1fr_1fr_180px_auto]">
-        <input className="input" placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        <input className="input" placeholder="Email or phone" value={form.emailOrPhone} onChange={(e) => setForm({ ...form, emailOrPhone: e.target.value })} required />
-        <select className="input" value={form.attendanceStatus} onChange={(e) => setForm({ ...form, attendanceStatus: e.target.value })}>
-          <option value="attending">Attending</option>
-          <option value="tentative">Tentative</option>
-          <option value="not-attending">Not attending</option>
-        </select>
-        <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
-      </form>
+      {!canManageParticipants && (
+        <EmptyState
+          title="Participant list is read-only for members"
+          body="Members can see who is tagged to the outing, but only Admin and Finance users can add, edit, or remove participants. Revolutionary guardrails, apparently."
+        />
+      )}
+
+      {canManageParticipants && (
+        <form onSubmit={addParticipant} className="mb-5 grid gap-3 md:grid-cols-[1fr_1fr_180px_auto]">
+          <input className="input" placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <input className="input" placeholder="Email or phone" value={form.emailOrPhone} onChange={(e) => setForm({ ...form, emailOrPhone: e.target.value })} required />
+          <select className="input" value={form.attendanceStatus} onChange={(e) => setForm({ ...form, attendanceStatus: e.target.value })}>
+            <option value="attending">Attending</option>
+            <option value="tentative">Tentative</option>
+            <option value="not-attending">Not attending</option>
+          </select>
+          <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
+        </form>
+      )}
 
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -815,13 +861,13 @@ function Participants({ data, reload, setToast }) {
               <th className="p-3">Contact</th>
               <th className="p-3">Attendance</th>
               <th className="p-3">Payment</th>
-              <th className="p-3">Actions</th>
+              {canManageParticipants && <th className="p-3">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {data.participants.map((participant) => (
               <tr key={participant.id} className="border-t border-slate-100 align-top">
-                {editingId === participant.id ? (
+                {canManageParticipants && editingId === participant.id ? (
                   <>
                     <td className="p-3"><input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required /></td>
                     <td className="p-3"><input className="input" value={editForm.emailOrPhone} onChange={(e) => setEditForm({ ...editForm, emailOrPhone: e.target.value })} required /></td>
@@ -853,12 +899,14 @@ function Participants({ data, reload, setToast }) {
                     <td className="p-3 text-slate-600">{participant.emailOrPhone}</td>
                     <td className="p-3"><span className={statusBadge(participant.attendanceStatus)}>{participant.attendanceStatus}</span></td>
                     <td className="p-3"><span className={statusBadge(participant.paymentStatus)}>{participant.paymentStatus}</span></td>
-                    <td className="p-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button className="btn-ghost" onClick={() => startEdit(participant)} type="button"><Pencil size={15} /> Edit</button>
-                        <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
-                      </div>
-                    </td>
+                    {canManageParticipants && (
+                      <td className="p-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button className="btn-ghost" onClick={() => startEdit(participant)} type="button"><Pencil size={15} /> Edit</button>
+                          <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
+                        </div>
+                      </td>
+                    )}
                   </>
                 )}
               </tr>
@@ -1931,6 +1979,8 @@ export default function App() {
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
   const canViewAudit = currentRole === 'admin' || currentRole === 'finance';
+  const canManageEventSetup = currentRole === 'admin' || currentRole === 'finance';
+  const canManageParticipants = currentRole === 'admin' || currentRole === 'finance';
   const unreadInboxCount = inboxItems.filter((item) => !item.read).length;
 
   const tabs = useMemo(() => {
@@ -2075,8 +2125,8 @@ export default function App() {
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {activeTab === 'dashboard' && <Dashboard data={data} />}
         {activeTab === 'events' && canViewEvents && <EventsConsole data={data} reload={reload} setToast={setToast} onSwitchEvent={switchEvent} />}
-        {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} />}
-        {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
+        {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} canManageParticipants={canManageParticipants} />}
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
