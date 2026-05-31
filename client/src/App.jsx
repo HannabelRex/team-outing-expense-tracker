@@ -481,7 +481,28 @@ function EmptyState({ title, body }) {
   );
 }
 
+function NoAssignedDashboard({ data }) {
+  return (
+    <div className="space-y-6">
+      <Section title="No assigned outing yet" icon={CalendarDays}>
+        <EmptyState
+          title="You are signed in, but you are not tagged to any outing yet."
+          body="Ask an admin to add your login email in the Participants tab of the relevant event. Once you are tagged, this dashboard will show your event, balances, expenses, and inbox reminders."
+        />
+      </Section>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Assigned events" value="0" helper="No outings are linked to this login email yet" />
+        <StatCard label="Participants" value="0" helper="You will appear here after admin assignment" />
+        <StatCard label="Total spent" value={money(0, data.event.currency)} helper="No assigned event spending yet" />
+        <StatCard label="Pending balance" value={money(0, data.event.currency)} helper="Nothing owed until you are assigned" />
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ data }) {
+  if (data.noAssignedEvent) return <NoAssignedDashboard data={data} />;
+
   const { dashboard, event } = data;
   const currency = event.currency;
 
@@ -1892,10 +1913,10 @@ export default function App() {
   }, [session?.access_token]);
 
   useEffect(() => {
-    if (data?.activeEventId && session?.access_token) {
+    if (data && session?.access_token) {
       loadNotificationInbox();
     }
-  }, [data?.activeEventId, session?.access_token]);
+  }, [data?.activeEventId, data?.noAssignedEvent, session?.access_token]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1904,8 +1925,9 @@ export default function App() {
   }, [toast]);
 
   const currentRole = data?.currentUser?.role || 'member';
+  const hasAssignedEvent = !data?.noAssignedEvent;
   const canViewEvents = currentRole === 'admin' || currentRole === 'finance';
-  const canSwitchEvents = canViewEvents || (currentRole === 'member' && (data?.eventList?.length || 0) > 1);
+  const canSwitchEvents = hasAssignedEvent && (canViewEvents || (currentRole === 'member' && (data?.eventList?.length || 0) > 1));
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
   const canViewAudit = currentRole === 'admin' || currentRole === 'finance';
@@ -1920,14 +1942,16 @@ export default function App() {
       visibleTabs.push(['events', 'Events']);
     }
 
-    visibleTabs.push(
-      ['event', 'Event setup'],
-      ['participants', 'Participants'],
-      ['budget', 'Budget'],
-      ['expenses', 'Expenses'],
-      ['settlements', 'Settlements'],
-      ['reports', 'Reports']
-    );
+    if (hasAssignedEvent || canViewEvents) {
+      visibleTabs.push(
+        ['event', 'Event setup'],
+        ['participants', 'Participants'],
+        ['budget', 'Budget'],
+        ['expenses', 'Expenses'],
+        ['settlements', 'Settlements'],
+        ['reports', 'Reports']
+      );
+    }
 
     if (canViewNotifications) {
       visibleTabs.push(['notifications', 'Notifications']);
@@ -1942,7 +1966,7 @@ export default function App() {
     }
 
     return visibleTabs;
-  }, [canViewEvents, canViewNotifications, canViewAudit, canViewRoles]);
+  }, [canViewEvents, canViewNotifications, canViewAudit, canViewRoles, hasAssignedEvent]);
 
   useEffect(() => {
     const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
@@ -1978,9 +2002,15 @@ export default function App() {
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Team Outing Expense Tracker</p>
               <h1 className="mt-2 text-3xl font-black md:text-5xl">{data.event.name}</h1>
               <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-300">
-                <span className="inline-flex items-center gap-2"><CalendarDays size={16} /> {data.event.date}</span>
-                <span className="inline-flex items-center gap-2"><MapPin size={16} /> {data.event.location}</span>
-                <span className="inline-flex items-center gap-2"><Users size={16} /> {data.participants.length} participants</span>
+                {data.noAssignedEvent ? (
+                  <span className="inline-flex items-center gap-2"><AlertTriangle size={16} /> Waiting for an admin to tag your login email to an outing</span>
+                ) : (
+                  <>
+                    <span className="inline-flex items-center gap-2"><CalendarDays size={16} /> {data.event.date}</span>
+                    <span className="inline-flex items-center gap-2"><MapPin size={16} /> {data.event.location}</span>
+                    <span className="inline-flex items-center gap-2"><Users size={16} /> {data.participants.length} participants</span>
+                  </>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">

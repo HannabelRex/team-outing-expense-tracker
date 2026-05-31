@@ -282,3 +282,8 @@ See `docs/phase7-audit-security.md` for setup and testing notes.
 ## Phase 7B: User access and password reset
 
 Adds admin controls to remove or restore user access from the Roles tab, send password reset emails, and lets users reset their password from the sign-in screen. Disabled users are blocked by the backend while audit history is preserved.
+
+
+## Phase 7B Hotfix: Unassigned User Empty Dashboard
+
+Members with no assigned events can now log in and see a helpful empty dashboard instead of being blocked by an error. Admins can tag the user's login email in an event's Participants tab to grant access to that event.

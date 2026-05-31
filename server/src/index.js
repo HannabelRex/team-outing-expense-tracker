@@ -163,6 +163,36 @@ function memberAssignedEvents(data, user) {
   );
 }
 
+function buildUnassignedMemberEventRecord(user = {}) {
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    id: 'no-assigned-events',
+    status: 'empty',
+    noAssignedEvent: true,
+    createdAt: today,
+    updatedAt: today,
+    event: {
+      id: 'no-assigned-events',
+      name: 'No assigned outings yet',
+      date: today,
+      location: 'Waiting for admin assignment',
+      estimatedBudget: 0,
+      currency: 'INR',
+      settlementDeadline: '',
+      organizer: {
+        name: 'Admin',
+        email: ''
+      }
+    },
+    participants: [],
+    categories: [],
+    expenses: [],
+    settlements: [],
+    notifications: [],
+    auditLog: []
+  };
+}
+
 function visibleEventsForUser(data, user) {
   normalizeMultiEventStore(data);
   if (['admin', 'finance'].includes(user.role)) return data.events;
@@ -178,9 +208,7 @@ function getEventRecordForUser(data, user) {
 
   const assignedEvents = memberAssignedEvents(data, user);
   if (assignedEvents.length === 0) {
-    const error = new Error('You are not tagged as a participant in any event yet. Ask an admin to add your login email in the Participants tab.');
-    error.statusCode = 403;
-    throw error;
+    return buildUnassignedMemberEventRecord(user);
   }
 
   return assignedEvents.find((eventRecord) => eventRecord.id === user.activeEventId)
@@ -513,6 +541,7 @@ app.get('/api/health', (req, res) => {
     securityHardening: 'enabled',
     userAccessControl: 'enabled',
     passwordReset: 'enabled',
+    unassignedMemberEmptyState: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -654,14 +683,16 @@ app.get('/api/bootstrap', asyncHandler(async (req, res) => {
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
+  const noAssignedEvent = Boolean(activeEvent.noAssignedEvent);
   const dashboard = calculateDashboard(activeEvent);
-  const settlementPlan = syncSettlements(activeEvent);
+  const settlementPlan = noAssignedEvent ? { settlements: [], allSettled: false, participantBalances: [] } : syncSettlements(activeEvent);
   const eventList = visibleEventsForUser(data, currentUser).map(eventSummary);
   await writeStore(data);
   res.json({
     ...activeEvent,
     event: { ...activeEvent.event, status: activeEvent.status },
-    activeEventId: activeEvent.id,
+    activeEventId: noAssignedEvent ? '' : activeEvent.id,
+    noAssignedEvent,
     eventList,
     currentUser: publicUser(currentUser),
     users: ensureUsers(data).map(publicUser),
