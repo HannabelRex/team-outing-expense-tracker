@@ -172,7 +172,8 @@ function getEventRecordForUser(data, user) {
     throw error;
   }
 
-  return assignedEvents.find((eventRecord) => eventRecord.id === data.activeEventId)
+  return assignedEvents.find((eventRecord) => eventRecord.id === user.activeEventId)
+    || assignedEvents.find((eventRecord) => eventRecord.id === data.activeEventId)
     || assignedEvents.find((eventRecord) => eventRecord.status === 'active')
     || assignedEvents[0];
 }
@@ -309,6 +310,7 @@ function publicUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
+    activeEventId: user.activeEventId || '',
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt
   };
@@ -407,7 +409,8 @@ app.get('/api/health', (req, res) => {
     receiptStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not-configured',
     auth: AUTH_REQUIRED ? 'required' : 'disabled',
     multiEvent: 'enabled',
-    memberEventScoping: 'enabled'
+    memberEventScoping: 'enabled',
+    memberEventSwitching: 'enabled'
   });
 });
 
@@ -531,11 +534,22 @@ app.post('/api/events/:id/activate', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin', 'finance']);
   const eventRecord = requireExistingItem(data.events.find((record) => record.id === req.params.id), 'Event');
-  data.activeEventId = eventRecord.id;
+
+  if (['admin', 'finance'].includes(currentUser.role)) {
+    data.activeEventId = eventRecord.id;
+  } else {
+    const allowedEvent = memberAssignedEvents(data, currentUser).some((record) => record.id === eventRecord.id);
+    if (!allowedEvent) {
+      const error = new Error('You can only switch to events where your login email is tagged as a participant.');
+      error.statusCode = 403;
+      throw error;
+    }
+    currentUser.activeEventId = eventRecord.id;
+  }
+
   await writeStore(data);
-  res.json({ activeEventId: data.activeEventId, event: eventSummary(eventRecord) });
+  res.json({ activeEventId: eventRecord.id, event: eventSummary(eventRecord) });
 }));
 
 app.patch('/api/events/:id', asyncHandler(async (req, res) => {

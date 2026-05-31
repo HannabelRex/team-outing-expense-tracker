@@ -1358,6 +1358,7 @@ export default function App() {
 
   const currentRole = data?.currentUser?.role || 'member';
   const canViewEvents = currentRole === 'admin' || currentRole === 'finance';
+  const canSwitchEvents = canViewEvents || (currentRole === 'member' && (data?.eventList?.length || 0) > 1);
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
 
@@ -1430,7 +1431,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              {canViewEvents && data.eventList?.length > 0 && (
+              {canSwitchEvents && data.eventList?.length > 0 && (
                 <select
                   className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950"
                   value={data.activeEventId || ''}
