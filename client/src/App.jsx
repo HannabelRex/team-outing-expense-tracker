@@ -1134,24 +1134,134 @@ function Settlements({ data, reload, setToast }) {
   );
 }
 
-function Notifications({ setToast }) {
-  const [form, setForm] = useState({ type: 'payment-reminder', channel: 'email-placeholder', title: 'Pending payment reminder', message: 'Please clear your team outing balance before the settlement deadline.' });
+function Notifications({ data, setToast }) {
+  const [form, setForm] = useState({
+    type: 'payment-reminder',
+    channel: 'in-app',
+    target: 'participants-with-balance',
+    title: 'Pending payment reminder',
+    message: 'Please clear your team outing balance before the settlement deadline.',
+    selectedParticipantIds: []
+  });
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  async function sendPreview(event) {
+  const participants = data.participants || [];
+  const balanceMap = new Map((data.dashboard?.participantBalances || []).map((balance) => [balance.participantId, balance]));
+
+  async function loadHistory() {
+    try {
+      setLoadingHistory(true);
+      const rows = await api('/notifications');
+      setHistory(rows);
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  useEffect(() => {
+    loadHistory();
+  }, [data.activeEventId]);
+
+  function toggleParticipant(participantId) {
+    const selected = new Set(form.selectedParticipantIds);
+    if (selected.has(participantId)) selected.delete(participantId);
+    else selected.add(participantId);
+    setForm({ ...form, selectedParticipantIds: [...selected] });
+  }
+
+  async function sendReminder(event) {
     event.preventDefault();
-    await api('/notifications/send-preview', { method: 'POST', body: JSON.stringify(form) });
-    setToast('Notification preview queued. No inbox was harmed.');
+    try {
+      setSending(true);
+      const notification = await api('/notifications/send-preview', { method: 'POST', body: JSON.stringify(form) });
+      const emailSummary = notification.emailStatus && notification.emailStatus !== 'not-requested' ? ` Email: ${notification.emailStatus}.` : '';
+      setToast(`Reminder queued for ${notification.recipientCount || 0} recipient(s).${emailSummary}`);
+      await loadHistory();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function deleteNotification(notificationId) {
+    if (!window.confirm('Delete this reminder from history?')) return;
+    try {
+      await api(`/notifications/${notificationId}`, { method: 'DELETE' });
+      setToast('Reminder removed from history. One less digital breadcrumb.');
+      await loadHistory();
+    } catch (err) {
+      showActionError(setToast, err);
+    }
   }
 
   return (
-    <Section title="Notifications and reminders" icon={Bell}>
-      <form onSubmit={sendPreview} className="grid gap-4 md:grid-cols-2">
+    <Section title="Notifications and reminders" icon={Bell} action={<button className="btn-ghost" type="button" onClick={loadHistory}>{loadingHistory ? 'Loading...' : 'Refresh history'}</button>}>
+      <form onSubmit={sendReminder} className="grid gap-4 md:grid-cols-2">
         <label className="field-label">Type<select className="input" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option value="outing-reminder">Upcoming outing</option><option value="payment-reminder">Pending payment</option><option value="missing-contribution">Missing contribution</option><option value="settlement-deadline">Settlement deadline</option></select></label>
-        <label className="field-label">Channel<select className="input" value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })}><option value="in-app">In-app</option><option value="email-placeholder">Email placeholder</option></select></label>
-        <label className="field-label md:col-span-2">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
+        <label className="field-label">Channel<select className="input" value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })}><option value="in-app">In-app history only</option><option value="email">Email</option><option value="both">In-app + email</option></select></label>
+        <label className="field-label">Recipients<select className="input" value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })}><option value="participants-with-balance">Participants with pending balance</option><option value="all-participants">All participants with email</option><option value="selected-participants">Selected participants</option></select></label>
+        <label className="field-label">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
         <label className="field-label md:col-span-2">Message<textarea className="input min-h-28" value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} /></label>
-        <div className="md:col-span-2"><button className="btn-primary" type="submit">Queue reminder preview</button></div>
+
+        {form.target === 'selected-participants' && (
+          <div className="md:col-span-2 rounded-3xl border border-slate-100 bg-slate-50 p-4">
+            <p className="mb-3 text-sm font-black text-slate-700">Select recipients</p>
+            <div className="grid gap-2 md:grid-cols-2">
+              {participants.map((participant) => {
+                const balance = balanceMap.get(participant.id);
+                return (
+                  <label key={participant.id} className="flex items-center justify-between gap-3 rounded-2xl bg-white p-3 text-sm ring-1 ring-slate-100">
+                    <span><input className="mr-2" type="checkbox" checked={form.selectedParticipantIds.includes(participant.id)} onChange={() => toggleParticipant(participant.id)} />{participant.name}</span>
+                    <span className="text-xs text-slate-500">{participant.emailOrPhone || 'No email'} · Net {money(balance?.netBalance || 0, data.event.currency)}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="md:col-span-2 flex flex-wrap items-center gap-3">
+          <button className="btn-primary" type="submit" disabled={sending}>{sending ? 'Sending...' : 'Send / queue reminder'}</button>
+          <p className="text-xs text-slate-500">Email delivery works when SMTP is configured in Render. Without SMTP, reminders are stored in-app only. Technology, generously giving us another config screen.</p>
+        </div>
       </form>
+
+      <div className="mt-8">
+        <h3 className="mb-3 text-lg font-black text-slate-950">Reminder history</h3>
+        {history.length === 0 ? (
+          <EmptyState title="No reminders yet" body="Send one above and it will appear here with recipient delivery status." />
+        ) : (
+          <div className="space-y-3">
+            {history.map((item) => (
+              <div key={item.id} className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-slate-500">{item.type} · {item.channel} · {new Date(item.createdAt).toLocaleString()}</p>
+                    <p className="text-lg font-black text-slate-950">{item.title}</p>
+                    <p className="mt-1 text-sm text-slate-600">{item.message}</p>
+                    <p className="mt-2 text-xs text-slate-500">Recipients: {item.recipientCount || item.recipients?.length || 0} · Email status: {item.emailStatus || 'not-requested'} · Created by {item.createdByName || 'Unknown'}</p>
+                  </div>
+                  <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteNotification(item.id)}>Delete</button>
+                </div>
+                {Array.isArray(item.recipients) && item.recipients.length > 0 && (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    {item.recipients.map((recipient) => (
+                      <div key={`${item.id}-${recipient.participantId}-${recipient.email}`} className="rounded-2xl bg-slate-50 p-3 text-xs text-slate-600">
+                        <span className="font-bold text-slate-800">{recipient.name}</span> · {recipient.email} · {recipient.deliveryStatus || 'queued'}{recipient.error ? ` · ${recipient.error}` : ''}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </Section>
   );
 }
@@ -1538,7 +1648,7 @@ export default function App() {
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
-        {activeTab === 'notifications' && canViewNotifications && <Notifications setToast={setToast} />}
+        {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
         {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
       </div>
 

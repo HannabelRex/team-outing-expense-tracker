@@ -259,3 +259,9 @@ See `docs/phase4-multi-event-management.md` for the full test checklist.
 ## Phase 5: PDF Reports
 
 Phase 5 adds authenticated PDF report export using the backend `/api/reports.pdf` endpoint. Reports include event details, budgets, category spending, participant balances, settlements, expenses, receipt references, and the developer signature.
+
+## Phase 6: Notifications and reminders
+
+This version adds event-wise reminder history and optional SMTP email delivery. Admin and Finance users can send reminders to all participants, participants with pending balances, or selected participants. Members cannot access the Notifications tab.
+
+Backend health includes `inAppNotifications` and `emailNotifications` status. Configure SMTP variables in Render to enable real email sending. Without SMTP, reminders are still stored in the app as in-app history.
