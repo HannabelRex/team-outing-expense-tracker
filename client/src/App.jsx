@@ -227,6 +227,9 @@ function AuthScreen({ onSession, setToast }) {
 
       onSession(session);
       setToast(mode === 'signup' ? 'Account created and signed in.' : 'Signed in successfully.');
+      if (mode === 'signup') {
+        window.setTimeout(() => window.location.reload(), 350);
+      }
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1159,6 +1162,12 @@ export default function App() {
   const [session, setSession] = useState(() => readSavedSession());
 
   function handleSession(nextSession) {
+    const hasToken = Boolean(nextSession?.access_token);
+    setLoading(hasToken);
+    setError('');
+    if (hasToken) {
+      setData(null);
+    }
     setSession(nextSession);
     saveSession(nextSession);
     setApiAccessToken(nextSession?.access_token || '');
@@ -1221,6 +1230,10 @@ export default function App() {
 
   if (error && !data) {
     return <div className="grid min-h-screen place-items-center bg-slate-100 p-6"><div className="rounded-3xl bg-white p-6 shadow-soft"><p className="font-bold text-rose-700">{error}</p><button className="btn-primary mt-4" onClick={reload}>Retry</button></div></div>;
+  }
+
+  if (!data) {
+    return <div className="grid min-h-screen place-items-center bg-slate-100 text-slate-700">Loading your account and outing data...</div>;
   }
 
   const currency = data.event.currency;
