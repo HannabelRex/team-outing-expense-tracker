@@ -146,14 +146,60 @@ function fileToBase64(file) {
   });
 }
 
-async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (apiAccessToken) headers.Authorization = `Bearer ${apiAccessToken}`;
+async function refreshSavedSessionToken() {
+  const savedSession = readSavedSession();
+  const refreshToken = savedSession?.refresh_token;
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers,
-    ...options
+  if (!SUPABASE_AUTH_URL || !SUPABASE_PUBLISHABLE_KEY || !refreshToken) {
+    throw new Error('Your login session expired. Please sign out and sign in again.');
+  }
+
+  const response = await fetch(`${SUPABASE_AUTH_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ refresh_token: refreshToken })
   });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.access_token) {
+    saveSession(null);
+    setApiAccessToken('');
+    throw new Error('Your login session expired. Please sign out and sign in again.');
+  }
+
+  const nextSession = {
+    ...savedSession,
+    ...body,
+    refresh_token: body.refresh_token || savedSession.refresh_token
+  };
+  saveSession(nextSession);
+  setApiAccessToken(nextSession.access_token);
+  return nextSession.access_token;
+}
+
+async function api(path, options = {}) {
+  async function request() {
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (apiAccessToken) headers.Authorization = `Bearer ${apiAccessToken}`;
+    return fetch(`${API_BASE}${path}`, {
+      headers,
+      ...options
+    });
+  }
+
+  let response = await request();
+
+  if (response.status === 401 && !options.skipAuthRefresh) {
+    try {
+      await refreshSavedSessionToken();
+      response = await request();
+    } catch (refreshError) {
+      throw refreshError;
+    }
+  }
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({ error: 'Request failed.' }));
