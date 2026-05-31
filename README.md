@@ -214,3 +214,20 @@ npm run test:logic
 ## Production caution
 
 This app now supports persistent Supabase PostgreSQL storage, but mock authentication is still not real authentication. For actual company usage, add real login and role-based access before storing sensitive finance data.
+
+## Phase 2 receipt uploads
+
+Phase 2 adds real receipt uploads through Supabase Storage. See:
+
+```text
+docs/phase2-receipt-upload.md
+```
+
+Add these Render environment variables before testing uploads:
+
+```text
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+SUPABASE_STORAGE_BUCKET=receipts
+MAX_RECEIPT_BYTES=4194304
+```

@@ -14,6 +14,10 @@ import {
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, '');
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'receipts';
+const MAX_RECEIPT_BYTES = Number(process.env.MAX_RECEIPT_BYTES || 4 * 1024 * 1024);
 const CLIENT_URLS = (process.env.CLIENT_URL || 'http://localhost:5173')
   .split(',')
   .map((url) => url.trim().replace(/\/+$/, ''))
@@ -26,7 +30,7 @@ app.use(cors({
     return callback(new Error(`CORS blocked origin: ${origin}`));
   }
 }));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '12mb' }));
 app.use(morgan('dev'));
 
 function asyncHandler(fn) {
@@ -52,8 +56,95 @@ function syncSettlements(data) {
   return plan;
 }
 
+function requireReceiptStorageConfig() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    const error = new Error('Receipt storage is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Render.');
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
+function safeFileName(fileName = 'receipt') {
+  const cleaned = String(fileName).trim().replace(/[^a-zA-Z0-9._-]/g, '-');
+  return cleaned || 'receipt';
+}
+
+function extensionFromContentType(contentType = '') {
+  const map = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'application/pdf': '.pdf'
+  };
+  return map[contentType] || '';
+}
+
+function validateReceiptPayload({ fileName, contentType, base64 }) {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+  if (!fileName || !contentType || !base64) {
+    const error = new Error('Receipt file name, type, and content are required.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!allowedTypes.includes(contentType)) {
+    const error = new Error('Only JPG, PNG, WebP, and PDF receipts are allowed.');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+async function uploadReceiptToSupabase({ fileName, contentType, base64 }) {
+  requireReceiptStorageConfig();
+  validateReceiptPayload({ fileName, contentType, base64 });
+
+  const buffer = Buffer.from(base64, 'base64');
+  if (buffer.byteLength <= 0) {
+    const error = new Error('Receipt file is empty.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (buffer.byteLength > MAX_RECEIPT_BYTES) {
+    const error = new Error(`Receipt file is too large. Maximum allowed size is ${Math.round(MAX_RECEIPT_BYTES / 1024 / 1024)} MB.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const cleanName = safeFileName(fileName);
+  const ext = cleanName.includes('.') ? '' : extensionFromContentType(contentType);
+  const storagePath = `expense-receipts/${new Date().toISOString().slice(0, 10)}/${nanoid(12)}-${cleanName}${ext}`;
+  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${storagePath}`;
+
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      'Content-Type': contentType,
+      'x-upsert': 'true'
+    },
+    body: buffer
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(`Receipt upload failed. ${body || response.statusText}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    id: `r-${nanoid(8)}`,
+    fileName: cleanName,
+    contentType,
+    sizeBytes: buffer.byteLength,
+    storagePath,
+    url: `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${storagePath}`,
+    uploadedAt: new Date().toISOString()
+  };
+}
+
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, app: 'Team Outing Expense Tracker', storage: process.env.DATABASE_URL ? 'postgres' : 'local-json' });
+  res.json({ ok: true, app: 'Team Outing Expense Tracker', storage: process.env.DATABASE_URL ? 'postgres' : 'local-json', receiptStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not-configured' });
 });
 
 app.get('/api/bootstrap', asyncHandler(async (req, res) => {
@@ -200,6 +291,16 @@ app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
   data.categories = data.categories.filter((category) => category.id !== req.params.id);
   await writeStore(data);
   res.status(204).send();
+}));
+
+
+app.post('/api/receipts/upload', asyncHandler(async (req, res) => {
+  const receipt = await uploadReceiptToSupabase({
+    fileName: sanitizeObject(req.body).fileName,
+    contentType: req.body.contentType,
+    base64: req.body.base64
+  });
+  res.status(201).json(receipt);
 }));
 
 app.get('/api/expenses', asyncHandler(async (req, res) => {

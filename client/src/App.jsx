@@ -5,6 +5,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Download,
+  ExternalLink,
   FileText,
   Filter,
   MapPin,
@@ -16,6 +17,7 @@ import {
   ShieldCheck,
   Save,
   Trash2,
+  UploadCloud,
   Users,
   WalletCards,
   Smartphone,
@@ -50,6 +52,7 @@ const emptyExpenseForm = {
   paymentMethod: 'UPI',
   notes: '',
   receiptFileName: '',
+  receipt: null,
   isRecurring: false,
   approvalStatus: 'pending'
 };
@@ -78,6 +81,7 @@ function buildDefaultExpenseForm(data, expense = null) {
       paymentMethod: expense.paymentMethod || 'UPI',
       notes: expense.notes || '',
       receiptFileName: expense.receipt?.fileName || '',
+      receipt: expense.receipt || null,
       isRecurring: Boolean(expense.isRecurring),
       approvalStatus: expense.approvalStatus || 'pending'
     };
@@ -103,7 +107,7 @@ function buildExpensePayload(form) {
   const payload = {
     ...form,
     amount: Number(form.amount),
-    receipt: form.receiptFileName ? { fileName: form.receiptFileName, url: `receipt-placeholder://${form.receiptFileName}` } : null,
+    receipt: form.receipt || null,
     customSplits: parseSplitText(form.customSplitsText, 'amount'),
     percentageSplits: parseSplitText(form.percentageSplitsText, 'percentage')
   };
@@ -118,6 +122,19 @@ function showActionError(setToast, err) {
   setToast(err?.message || 'Action failed. The app tried, the universe objected.');
 }
 
+
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',')[1] : result);
+    };
+    reader.onerror = () => reject(new Error('Could not read the receipt file. Even the browser gave up.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -533,6 +550,7 @@ function Expenses({ data, reload, setToast }) {
   const [editingExpenseId, setEditingExpenseId] = useState('');
   const [filters, setFilters] = useState({ query: '', categoryId: '', paidByParticipantId: '', approvalStatus: '', fromDate: '', toDate: '' });
   const [busy, setBusy] = useState(false);
+  const [receiptBusy, setReceiptBusy] = useState(false);
   const currency = data.event.currency;
 
   const expenseRows = useMemo(() => {
@@ -566,6 +584,45 @@ function Expenses({ data, reload, setToast }) {
     setEditingExpenseId(expense.id);
     setForm(buildDefaultExpenseForm(data, expense));
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+
+  async function uploadReceipt(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!allowedTypes.includes(file.type)) {
+      setToast('Only JPG, PNG, WebP, and PDF receipts are allowed. The app has standards now, apparently.');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > 4 * 1024 * 1024) {
+      setToast('Receipt is too large. Maximum size is 4 MB. Compress it before the cloud starts wheezing.');
+      event.target.value = '';
+      return;
+    }
+
+    setReceiptBusy(true);
+    try {
+      const base64 = await fileToBase64(file);
+      const receipt = await api('/receipts/upload', {
+        method: 'POST',
+        body: JSON.stringify({ fileName: file.name, contentType: file.type, base64 })
+      });
+      setForm((current) => ({ ...current, receipt, receiptFileName: receipt.fileName }));
+      setToast('Receipt uploaded and attached. The paper trail has entered the chat.');
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setReceiptBusy(false);
+      event.target.value = '';
+    }
+  }
+
+  function clearReceipt() {
+    setForm((current) => ({ ...current, receipt: null, receiptFileName: '' }));
   }
 
   function toggleParticipant(id) {
@@ -635,7 +692,25 @@ function Expenses({ data, reload, setToast }) {
           <label className="field-label">Paid by<select className="input" value={form.paidByParticipantId} onChange={(e) => setForm({ ...form, paidByParticipantId: e.target.value })} required>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
           <label className="field-label">Payment method<select className="input" value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}><option>UPI</option><option>Card</option><option>Cash</option><option>Bank transfer</option><option>Corporate card</option></select></label>
           <label className="field-label">Split method<select className="input" value={form.splitMethod} onChange={(e) => setForm({ ...form, splitMethod: e.target.value })}><option value="equal">Equal among selected</option><option value="selected">Selected participants</option><option value="custom">Custom amount</option><option value="percentage">Percentage</option></select></label>
-          <label className="field-label">Receipt file name<input className="input" placeholder="receipt.jpg or invoice.pdf" value={form.receiptFileName} onChange={(e) => setForm({ ...form, receiptFileName: e.target.value })} /></label>
+
+          <div className="field-label">
+            Receipt upload
+            <label className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:border-slate-500">
+              <UploadCloud size={16} /> {receiptBusy ? 'Uploading receipt...' : 'Upload JPG, PNG, WebP, or PDF'}
+              <input className="hidden" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={uploadReceipt} disabled={receiptBusy || busy} />
+            </label>
+            {form.receipt && (
+              <div className="mt-2 rounded-2xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-slate-800">{form.receipt.fileName}</span>
+                  <div className="flex gap-2">
+                    <a className="btn-ghost" href={form.receipt.url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> View</a>
+                    <button className="btn-ghost text-rose-700" type="button" onClick={clearReceipt}><X size={14} /> Remove</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
           <label className="field-label">Approval status<select className="input" value={form.approvalStatus} onChange={(e) => setForm({ ...form, approvalStatus: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label>
 
           <div className="lg:col-span-3">
@@ -690,7 +765,7 @@ function Expenses({ data, reload, setToast }) {
               <tbody>
                 {filteredExpenses.map((expense) => (
                   <tr key={expense.id} className="border-t border-slate-100 align-top">
-                    <td className="p-3"><p className="font-bold text-slate-900">{expense.title}</p><p className="text-xs text-slate-500">{expense.date} · {expense.paymentMethod} · {expense.splitMethod}</p>{expense.receipt && <p className="mt-1 text-xs text-slate-500">Receipt: {expense.receipt.fileName}</p>}</td>
+                    <td className="p-3"><p className="font-bold text-slate-900">{expense.title}</p><p className="text-xs text-slate-500">{expense.date} · {expense.paymentMethod} · {expense.splitMethod}</p>{expense.receipt && <p className="mt-1 text-xs text-slate-500">Receipt: <a className="font-semibold text-slate-800 underline" href={expense.receipt.url} target="_blank" rel="noreferrer">{expense.receipt.fileName}</a></p>}</td>
                     <td className="p-3">{expense.categoryName}</td>
                     <td className="p-3">{expense.paidByName}</td>
                     <td className="p-3 font-bold">{money(expense.amount, currency)}</td>
