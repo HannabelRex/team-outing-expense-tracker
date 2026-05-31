@@ -437,6 +437,143 @@ function EventSetup({ data, reload, setToast }) {
   );
 }
 
+
+function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
+  const [form, setForm] = useState({
+    name: '',
+    date: new Date().toISOString().slice(0, 10),
+    location: '',
+    estimatedBudget: '',
+    currency: data.event.currency || 'INR',
+    settlementDeadline: '',
+    copyParticipantsFromEventId: ''
+  });
+  const [busy, setBusy] = useState(false);
+  const events = data.eventList || [];
+  const currency = data.event.currency;
+
+  async function createEvent(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api('/events', { method: 'POST', body: JSON.stringify(form) });
+      setToast('New outing event created and activated. Fresh chaos, neatly separated.');
+      setForm({
+        name: '',
+        date: new Date().toISOString().slice(0, 10),
+        location: '',
+        estimatedBudget: '',
+        currency: data.event.currency || 'INR',
+        settlementDeadline: '',
+        copyParticipantsFromEventId: ''
+      });
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateEventStatus(eventId, status) {
+    setBusy(true);
+    try {
+      await api(`/events/${eventId}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      setToast(status === 'active' ? 'Event reactivated.' : `Event marked as ${status}.`);
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteDraftEvent(eventId) {
+    if (!window.confirm('Delete this event? Only events without expenses can be deleted.')) return;
+    setBusy(true);
+    try {
+      await api(`/events/${eventId}`, { method: 'DELETE' });
+      setToast('Draft event deleted. It had one job and failed quietly.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title="Create outing event" icon={CalendarDays}>
+        <form onSubmit={createEvent} className="grid gap-4 md:grid-cols-2">
+          <label className="field-label">Event name<input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="Goa Team Outing" /></label>
+          <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
+          <label className="field-label">Location<input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required placeholder="Goa, India" /></label>
+          <label className="field-label">Estimated budget<input className="input" type="number" min="0" value={form.estimatedBudget} onChange={(e) => setForm({ ...form, estimatedBudget: e.target.value })} required /></label>
+          <label className="field-label">Currency<input className="input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} required /></label>
+          <label className="field-label">Settlement deadline<input className="input" type="date" value={form.settlementDeadline} onChange={(e) => setForm({ ...form, settlementDeadline: e.target.value })} /></label>
+          <label className="field-label md:col-span-2">Copy participants from existing event
+            <select className="input" value={form.copyParticipantsFromEventId} onChange={(e) => setForm({ ...form, copyParticipantsFromEventId: e.target.value })}>
+              <option value="">Do not copy participants</option>
+              {events.map((eventItem) => <option key={eventItem.id} value={eventItem.id}>{eventItem.name}</option>)}
+            </select>
+          </label>
+          <div className="md:col-span-2"><button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Create and switch</button></div>
+        </form>
+      </Section>
+
+      <Section title="Outing events" icon={CalendarDays}>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="p-3">Event</th>
+                <th className="p-3">Status</th>
+                <th className="p-3">Date</th>
+                <th className="p-3">Location</th>
+                <th className="p-3">Budget</th>
+                <th className="p-3">Spent</th>
+                <th className="p-3">People</th>
+                <th className="p-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((eventItem) => (
+                <tr key={eventItem.id} className="border-t border-slate-100 align-top">
+                  <td className="p-3">
+                    <p className="font-bold text-slate-900">{eventItem.name}</p>
+                    {eventItem.id === data.activeEventId && <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Current event</p>}
+                  </td>
+                  <td className="p-3"><span className={statusBadge(eventItem.status)}>{eventItem.status}</span></td>
+                  <td className="p-3">{eventItem.date}</td>
+                  <td className="p-3">{eventItem.location}</td>
+                  <td className="p-3">{money(eventItem.estimatedBudget, eventItem.currency || currency)}</td>
+                  <td className="p-3">{money(eventItem.totalSpent, eventItem.currency || currency)}</td>
+                  <td className="p-3">{eventItem.participantCount}</td>
+                  <td className="p-3">
+                    <div className="flex flex-wrap gap-2">
+                      {eventItem.id !== data.activeEventId && <button className="btn-ghost" type="button" disabled={busy} onClick={() => onSwitchEvent(eventItem.id)}>Switch</button>}
+                      {eventItem.status === 'archived' || eventItem.status === 'completed' ? (
+                        <button className="btn-ghost" type="button" disabled={busy} onClick={() => updateEventStatus(eventItem.id, 'active')}>Reactivate</button>
+                      ) : (
+                        <>
+                          <button className="btn-ghost" type="button" disabled={busy} onClick={() => updateEventStatus(eventItem.id, 'completed')}>Complete</button>
+                          <button className="btn-ghost" type="button" disabled={busy} onClick={() => updateEventStatus(eventItem.id, 'archived')}>Archive</button>
+                        </>
+                      )}
+                      {eventItem.expenseCount === 0 && events.length > 1 && <button className="btn-ghost text-rose-700" type="button" disabled={busy} onClick={() => deleteDraftEvent(eventItem.id)}>Delete</button>}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
 function Participants({ data, reload, setToast }) {
   const [form, setForm] = useState({ name: '', emailOrPhone: '', attendanceStatus: 'attending' });
   const [editingId, setEditingId] = useState('');
@@ -1193,6 +1330,17 @@ export default function App() {
     }
   }
 
+  async function switchEvent(eventId) {
+    try {
+      await api(`/events/${eventId}/activate`, { method: 'POST' });
+      setActiveTab('dashboard');
+      setToast('Switched outing event. Different trip, same financial consequences.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    }
+  }
+
   useEffect(() => {
     setApiAccessToken(session?.access_token || '');
     if (session?.access_token) {
@@ -1209,19 +1357,27 @@ export default function App() {
   }, [toast]);
 
   const currentRole = data?.currentUser?.role || 'member';
+  const canViewEvents = currentRole === 'admin' || currentRole === 'finance';
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
 
   const tabs = useMemo(() => {
     const visibleTabs = [
-      ['dashboard', 'Dashboard'],
+      ['dashboard', 'Dashboard']
+    ];
+
+    if (canViewEvents) {
+      visibleTabs.push(['events', 'Events']);
+    }
+
+    visibleTabs.push(
       ['event', 'Event setup'],
       ['participants', 'Participants'],
       ['budget', 'Budget'],
       ['expenses', 'Expenses'],
       ['settlements', 'Settlements'],
       ['reports', 'Reports']
-    ];
+    );
 
     if (canViewNotifications) {
       visibleTabs.push(['notifications', 'Notifications']);
@@ -1232,7 +1388,7 @@ export default function App() {
     }
 
     return visibleTabs;
-  }, [canViewNotifications, canViewRoles]);
+  }, [canViewEvents, canViewNotifications, canViewRoles]);
 
   useEffect(() => {
     const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
@@ -1274,6 +1430,16 @@ export default function App() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              {canViewEvents && data.eventList?.length > 0 && (
+                <select
+                  className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950"
+                  value={data.activeEventId || ''}
+                  onChange={(e) => switchEvent(e.target.value)}
+                  aria-label="Switch outing event"
+                >
+                  {data.eventList.map((eventItem) => <option key={eventItem.id} value={eventItem.id}>{eventItem.name}</option>)}
+                </select>
+              )}
               {data.currentUser && (
                 <div className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/20">
                   {data.currentUser.name || data.currentUser.email} · {data.currentUser.role}
@@ -1302,6 +1468,7 @@ export default function App() {
 
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {activeTab === 'dashboard' && <Dashboard data={data} />}
+        {activeTab === 'events' && canViewEvents && <EventsConsole data={data} reload={reload} setToast={setToast} onSwitchEvent={switchEvent} />}
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} />}

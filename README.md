@@ -245,3 +245,12 @@ New capabilities:
 - Admin can manage event, participants, budget, and settlements.
 - Finance can approve expenses and update settlements.
 - Members can add expenses and upload receipts, but cannot manage all admin settings.
+
+
+## Phase 4: Multi-Event Management
+
+This version supports multiple outing events. Admin and Finance users can access the Events tab, create/switch events, and keep each outing's participants, budgets, expenses, settlements, notifications, receipts, and reports separate.
+
+After deploying the backend, `/api/health` should include `"multiEvent": "enabled"`.
+
+See `docs/phase4-multi-event-management.md` for the full test checklist.
