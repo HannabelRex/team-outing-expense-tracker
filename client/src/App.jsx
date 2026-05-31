@@ -1582,6 +1582,90 @@ function Roles({ data, reload, setToast }) {
   );
 }
 
+
+function AuditTrail({ data, setToast }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [actionFilter, setActionFilter] = useState('all');
+
+  async function loadAudit() {
+    try {
+      setLoading(true);
+      const auditRows = await api('/audit');
+      setRows(auditRows);
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAudit();
+  }, [data.activeEventId]);
+
+  const actionOptions = useMemo(() => ['all', ...Array.from(new Set(rows.map((row) => row.action))).sort()], [rows]);
+  const filteredRows = rows.filter((row) => {
+    const searchable = `${row.action} ${row.entityType} ${row.description} ${row.userName} ${row.userEmail}`.toLowerCase();
+    const matchesQuery = !query.trim() || searchable.includes(query.trim().toLowerCase());
+    const matchesAction = actionFilter === 'all' || row.action === actionFilter;
+    return matchesQuery && matchesAction;
+  });
+
+  return (
+    <div className="space-y-5">
+      <Section
+        title="Audit trail"
+        icon={FileText}
+        action={<button className="btn-ghost" type="button" onClick={loadAudit}>{loading ? 'Loading...' : 'Refresh audit'}</button>}
+      >
+        <div className="grid gap-3 md:grid-cols-[1fr_260px]">
+          <input
+            className="input"
+            placeholder="Search action, user, or description"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <select className="input" value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
+            {actionOptions.map((action) => <option key={action} value={action}>{action === 'all' ? 'All actions' : action}</option>)}
+          </select>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {filteredRows.length === 0 && (
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-100">
+              {loading ? 'Loading audit entries...' : 'No audit entries yet for this event. Apparently everyone behaved, which is suspicious.'}
+            </div>
+          )}
+          {filteredRows.map((row) => (
+            <article key={row.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-slate-950">{row.description}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {new Date(row.createdAt).toLocaleString()} · {row.userName || row.userEmail} · {row.userRole}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">{row.action}</span>
+                  <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">{row.entityType}</span>
+                </div>
+              </div>
+              {row.details && Object.keys(row.details).length > 0 && (
+                <details className="mt-3 text-xs text-slate-600">
+                  <summary className="cursor-pointer font-bold text-slate-700">Details</summary>
+                  <pre className="mt-2 max-h-44 overflow-auto rounded-xl bg-white p-3 ring-1 ring-slate-100">{JSON.stringify(row.details, null, 2)}</pre>
+                </details>
+              )}
+            </article>
+          ))}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -1695,6 +1779,7 @@ export default function App() {
   const canSwitchEvents = canViewEvents || (currentRole === 'member' && (data?.eventList?.length || 0) > 1);
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
+  const canViewAudit = currentRole === 'admin' || currentRole === 'finance';
   const unreadInboxCount = inboxItems.filter((item) => !item.read).length;
 
   const tabs = useMemo(() => {
@@ -1719,12 +1804,16 @@ export default function App() {
       visibleTabs.push(['notifications', 'Notifications']);
     }
 
+    if (canViewAudit) {
+      visibleTabs.push(['audit', 'Audit']);
+    }
+
     if (canViewRoles) {
       visibleTabs.push(['roles', 'Roles']);
     }
 
     return visibleTabs;
-  }, [canViewEvents, canViewNotifications, canViewRoles]);
+  }, [canViewEvents, canViewNotifications, canViewAudit, canViewRoles]);
 
   useEffect(() => {
     const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
@@ -1834,6 +1923,7 @@ export default function App() {
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
+        {activeTab === 'audit' && canViewAudit && <AuditTrail data={data} setToast={setToast} />}
         {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
       </div>
 

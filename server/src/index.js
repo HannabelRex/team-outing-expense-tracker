@@ -94,7 +94,8 @@ function buildEventRecord(input = {}) {
     categories: Array.isArray(input.categories) && input.categories.length ? input.categories : defaultCategories(),
     expenses: Array.isArray(input.expenses) ? input.expenses : [],
     settlements: Array.isArray(input.settlements) ? input.settlements : [],
-    notifications: Array.isArray(input.notifications) ? input.notifications : []
+    notifications: Array.isArray(input.notifications) ? input.notifications : [],
+    auditLog: Array.isArray(input.auditLog) ? input.auditLog : Array.isArray(input.audit) ? input.audit : []
   };
 }
 
@@ -411,6 +412,72 @@ function canManageExpense(user, expense) {
   return ['admin', 'finance'].includes(user.role) || expense.createdByUserId === user.id;
 }
 
+function safeAuditDetails(details = {}) {
+  return sanitizeObject(details || {});
+}
+
+function addAuditLog(eventRecord, user, action, entityType, description, details = {}) {
+  eventRecord.auditLog = Array.isArray(eventRecord.auditLog) ? eventRecord.auditLog : [];
+  eventRecord.auditLog.push({
+    id: `a-${nanoid(8)}`,
+    createdAt: new Date().toISOString(),
+    userId: user?.id || '',
+    userName: user?.name || user?.email || 'Unknown user',
+    userEmail: user?.email || '',
+    userRole: user?.role || 'unknown',
+    eventId: eventRecord.id,
+    eventName: eventRecord.event?.name || 'Unknown event',
+    action,
+    entityType,
+    description,
+    details: safeAuditDetails(details)
+  });
+  eventRecord.auditLog = eventRecord.auditLog.slice(-750);
+}
+
+function publicAuditEntry(entry) {
+  return {
+    id: entry.id,
+    createdAt: entry.createdAt,
+    userName: entry.userName,
+    userEmail: entry.userEmail,
+    userRole: entry.userRole,
+    eventId: entry.eventId,
+    eventName: entry.eventName,
+    action: entry.action,
+    entityType: entry.entityType,
+    description: entry.description,
+    details: entry.details || {}
+  };
+}
+
+function currentEventForAudit(data, user) {
+  try {
+    return getEventRecordForUser(data, user);
+  } catch (_error) {
+    normalizeMultiEventStore(data);
+    return data.events[0];
+  }
+}
+
+function participantLabel(eventRecord, participantId) {
+  return findById(eventRecord.participants || [], participantId)?.name || participantId || 'Unknown participant';
+}
+
+function categoryLabel(eventRecord, categoryId) {
+  return findById(eventRecord.categories || [], categoryId)?.name || categoryId || 'Unknown category';
+}
+
+function assertMemberExpenseParticipant(eventRecord, user, expense) {
+  if (user.role !== 'member') return;
+  const paidByParticipant = findById(eventRecord.participants || [], expense.paidByParticipantId);
+  if (!participantMatchesUser(paidByParticipant, user)) {
+    const error = new Error('Members can only create or update expenses paid by their own participant profile. Match the participant email with your login email. Very picky, yes, but safer.');
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
@@ -425,6 +492,8 @@ app.get('/api/health', (req, res) => {
     pdfCurrencyMode: 'code',
     inAppNotifications: 'enabled',
     notificationInbox: 'enabled',
+    auditTrail: 'enabled',
+    securityHardening: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -458,8 +527,19 @@ app.patch('/api/users/:id', asyncHandler(async (req, res) => {
   if (!['admin', 'member', 'finance'].includes(nextRole)) {
     return res.status(400).json({ error: 'Role must be admin, member, or finance.' });
   }
+  const beforeRole = user.role;
+  const beforeName = user.name;
   user.role = nextRole;
   if (req.body.name) user.name = sanitizeObject(req.body).name;
+  const auditEvent = currentEventForAudit(data, currentUser);
+  addAuditLog(auditEvent, currentUser, 'user.role_updated', 'user', `Updated user access for ${user.email || user.name}.`, {
+    targetUserId: user.id,
+    targetEmail: user.email,
+    beforeRole,
+    afterRole: user.role,
+    beforeName,
+    afterName: user.name
+  });
   await writeStore(data);
   res.json(publicUser(user));
 }));
@@ -541,6 +621,10 @@ app.post('/api/events', asyncHandler(async (req, res) => {
 
   data.events.push(record);
   data.activeEventId = record.id;
+  addAuditLog(record, currentUser, 'event.created', 'event', `Created event ${record.event.name}.`, {
+    status: record.status,
+    copiedParticipantsFromEventId: req.body.copyParticipantsFromEventId || ''
+  });
   await writeStore(data);
   res.status(201).json(eventSummary(record));
 }));
@@ -577,8 +661,10 @@ app.patch('/api/events/:id', asyncHandler(async (req, res) => {
   if (!['active', 'completed', 'archived', 'cancelled'].includes(nextStatus)) {
     return res.status(400).json({ error: 'Event status must be active, completed, archived, or cancelled.' });
   }
+  const beforeStatus = eventRecord.status;
   eventRecord.status = nextStatus;
   eventRecord.archivedAt = nextStatus === 'archived' || nextStatus === 'completed' ? new Date().toISOString() : null;
+  addAuditLog(eventRecord, currentUser, 'event.status_updated', 'event', `Changed event status from ${beforeStatus} to ${nextStatus}.`, { beforeStatus, afterStatus: nextStatus });
   await writeStore(data);
   res.json(eventSummary(eventRecord));
 }));
@@ -593,6 +679,8 @@ app.delete('/api/events/:id', asyncHandler(async (req, res) => {
   if (eventRecord.expenses.length > 0) return res.status(409).json({ error: 'Delete is blocked for events that already have expenses. Archive it instead.' });
   data.events = data.events.filter((record) => record.id !== req.params.id);
   if (data.activeEventId === req.params.id) data.activeEventId = data.events[0].id;
+  const auditEvent = data.events[0];
+  addAuditLog(auditEvent, currentUser, 'event.deleted', 'event', `Deleted draft event ${eventRecord.event.name}.`, { deletedEventId: eventRecord.id, deletedEventName: eventRecord.event.name });
   await writeStore(data);
   res.status(204).send();
 }));
@@ -627,7 +715,16 @@ app.put('/api/event', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Estimated budget cannot be negative.' });
   }
 
+  const beforeEvent = activeEvent.event;
   activeEvent.event = nextEvent;
+  addAuditLog(activeEvent, currentUser, 'event.updated', 'event', `Updated event setup for ${nextEvent.name}.`, {
+    beforeName: beforeEvent.name,
+    afterName: nextEvent.name,
+    beforeBudget: beforeEvent.estimatedBudget,
+    afterBudget: nextEvent.estimatedBudget,
+    beforeDate: beforeEvent.date,
+    afterDate: nextEvent.date
+  });
   await writeStore(data);
   res.json({ ...activeEvent.event, status: activeEvent.status });
 }));
@@ -663,6 +760,7 @@ app.post('/api/participants', asyncHandler(async (req, res) => {
   }
 
   activeEvent.participants.push(participant);
+  addAuditLog(activeEvent, currentUser, 'participant.created', 'participant', `Added participant ${participant.name}.`, { participantId: participant.id, emailOrPhone: participant.emailOrPhone });
   await writeStore(data);
   res.status(201).json(participant);
 }));
@@ -676,6 +774,7 @@ app.put('/api/participants/:id', asyncHandler(async (req, res) => {
   assertActiveEventEditable(activeEvent);
   const participant = requireExistingItem(findById(activeEvent.participants, req.params.id), 'Participant');
 
+  const beforeParticipant = { ...participant };
   Object.assign(participant, {
     ...participant,
     ...sanitizeObject(req.body)
@@ -685,6 +784,13 @@ app.put('/api/participants/:id', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Participant name and email or phone are required.' });
   }
 
+  addAuditLog(activeEvent, currentUser, 'participant.updated', 'participant', `Updated participant ${participant.name}.`, {
+    participantId: participant.id,
+    beforeName: beforeParticipant.name,
+    afterName: participant.name,
+    beforeContact: beforeParticipant.emailOrPhone,
+    afterContact: participant.emailOrPhone
+  });
   await writeStore(data);
   res.json(participant);
 }));
@@ -696,6 +802,7 @@ app.delete('/api/participants/:id', asyncHandler(async (req, res) => {
   requireRole(currentUser, ['admin']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
+  const participant = requireExistingItem(findById(activeEvent.participants, req.params.id), 'Participant');
   const usedInExpense = activeEvent.expenses.some(
     (expense) => expense.paidByParticipantId === req.params.id || expense.participantIds.includes(req.params.id)
   );
@@ -704,7 +811,9 @@ app.delete('/api/participants/:id', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'Cannot remove a participant linked to existing expenses.' });
   }
 
+  const removedParticipant = participant;
   activeEvent.participants = activeEvent.participants.filter((participant) => participant.id !== req.params.id);
+  addAuditLog(activeEvent, currentUser, 'participant.deleted', 'participant', `Deleted participant ${removedParticipant.name}.`, { participantId: removedParticipant.id, emailOrPhone: removedParticipant.emailOrPhone });
   await writeStore(data);
   res.status(204).send();
 }));
@@ -740,6 +849,7 @@ app.post('/api/categories', asyncHandler(async (req, res) => {
   }
 
   activeEvent.categories.push(category);
+  addAuditLog(activeEvent, currentUser, 'category.created', 'category', `Added budget category ${category.name}.`, { categoryId: category.id, estimatedCost: category.estimatedCost });
   await writeStore(data);
   res.status(201).json(category);
 }));
@@ -753,6 +863,7 @@ app.put('/api/categories/:id', asyncHandler(async (req, res) => {
   assertActiveEventEditable(activeEvent);
   const category = requireExistingItem(findById(activeEvent.categories, req.params.id), 'Category');
 
+  const beforeCategory = { ...category };
   category.name = req.body.name ?? category.name;
   category.estimatedCost = roundMoney(Number(req.body.estimatedCost ?? category.estimatedCost));
 
@@ -760,6 +871,13 @@ app.put('/api/categories/:id', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Category name is required and cost cannot be negative.' });
   }
 
+  addAuditLog(activeEvent, currentUser, 'category.updated', 'category', `Updated budget category ${category.name}.`, {
+    categoryId: category.id,
+    beforeName: beforeCategory.name,
+    afterName: category.name,
+    beforeEstimatedCost: beforeCategory.estimatedCost,
+    afterEstimatedCost: category.estimatedCost
+  });
   await writeStore(data);
   res.json(category);
 }));
@@ -771,13 +889,16 @@ app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
   requireRole(currentUser, ['admin']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
+  const category = requireExistingItem(findById(activeEvent.categories, req.params.id), 'Category');
   const usedInExpense = activeEvent.expenses.some((expense) => expense.categoryId === req.params.id);
 
   if (usedInExpense) {
     return res.status(409).json({ error: 'Cannot remove a category linked to existing expenses.' });
   }
 
+  const removedCategory = category;
   activeEvent.categories = activeEvent.categories.filter((category) => category.id !== req.params.id);
+  addAuditLog(activeEvent, currentUser, 'category.deleted', 'category', `Deleted budget category ${removedCategory.name}.`, { categoryId: removedCategory.id, estimatedCost: removedCategory.estimatedCost });
   await writeStore(data);
   res.status(204).send();
 }));
@@ -827,7 +948,15 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
   };
 
   validateExpensePayload(expense);
+  assertMemberExpenseParticipant(activeEvent, currentUser, expense);
   activeEvent.expenses.push(expense);
+  addAuditLog(activeEvent, currentUser, 'expense.created', 'expense', `Created expense ${expense.title}.`, {
+    expenseId: expense.id,
+    amount: expense.amount,
+    category: categoryLabel(activeEvent, expense.categoryId),
+    paidBy: participantLabel(activeEvent, expense.paidByParticipantId),
+    receiptFileName: expense.receipt?.fileName || ''
+  });
   syncSettlements(activeEvent);
   await writeStore(data);
   res.status(201).json(expense);
@@ -852,6 +981,7 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'This expense is tied to completed settlements. Confirm before editing.' });
   }
 
+  const beforeExpense = { ...expense };
   const nextExpense = {
     ...expense,
     ...req.body,
@@ -859,7 +989,17 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
   };
 
   validateExpensePayload(nextExpense);
+  assertMemberExpenseParticipant(activeEvent, currentUser, nextExpense);
   Object.assign(expense, nextExpense);
+  addAuditLog(activeEvent, currentUser, req.body.approvalStatus && req.body.approvalStatus !== beforeExpense.approvalStatus ? 'expense.approval_updated' : 'expense.updated', 'expense', `Updated expense ${expense.title}.`, {
+    expenseId: expense.id,
+    beforeAmount: beforeExpense.amount,
+    afterAmount: expense.amount,
+    beforeStatus: beforeExpense.approvalStatus,
+    afterStatus: expense.approvalStatus,
+    beforePaidBy: participantLabel(activeEvent, beforeExpense.paidByParticipantId),
+    afterPaidBy: participantLabel(activeEvent, expense.paidByParticipantId)
+  });
   syncSettlements(activeEvent);
   await writeStore(data);
   res.json(expense);
@@ -881,7 +1021,9 @@ app.delete('/api/expenses/:id', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'Cannot delete a settled expense without confirmation.' });
   }
 
+  const removedExpense = expense;
   activeEvent.expenses = activeEvent.expenses.filter((item) => item.id !== req.params.id);
+  addAuditLog(activeEvent, currentUser, 'expense.deleted', 'expense', `Deleted expense ${removedExpense.title}.`, { expenseId: removedExpense.id, amount: removedExpense.amount });
   syncSettlements(activeEvent);
   await writeStore(data);
   res.status(204).send();
@@ -932,6 +1074,13 @@ app.patch('/api/settlements/:id', asyncHandler(async (req, res) => {
     isSettledLocked: activeEvent.settlements.some((item) => item.status === 'completed')
   }));
 
+  addAuditLog(activeEvent, currentUser, 'settlement.updated', 'settlement', `Updated settlement from ${settlement.fromParticipantName} to ${settlement.toParticipantName}.`, {
+    settlementId: settlement.id,
+    amount: settlement.amount,
+    paidAmount: settlement.paidAmount,
+    status: settlement.status,
+    transactionReference: settlement.transactionReference || ''
+  });
   await writeStore(data);
   res.json(settlement);
 }));
@@ -1092,6 +1241,20 @@ function inboxNotification(notification = {}, eventRecord = {}, user = {}) {
   };
 }
 
+
+app.get('/api/audit', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  const rows = (activeEvent.auditLog || [])
+    .map(publicAuditEntry)
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  await writeStore(data);
+  res.json(rows);
+}));
+
 app.get('/api/notification-inbox', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
@@ -1188,6 +1351,12 @@ app.post('/api/notifications/send-preview', asyncHandler(async (req, res) => {
   notification.status = notification.emailStatus === 'failed' ? 'delivery-failed' : 'queued';
   activeEvent.notifications = Array.isArray(activeEvent.notifications) ? activeEvent.notifications : [];
   activeEvent.notifications.push(notification);
+  addAuditLog(activeEvent, currentUser, 'notification.sent', 'notification', `Queued reminder ${notification.title} for ${notification.recipientCount} recipient(s).`, {
+    notificationId: notification.id,
+    channel: notification.channel,
+    emailStatus: notification.emailStatus,
+    recipientCount: notification.recipientCount
+  });
   await writeStore(data);
   res.status(201).json(notification);
 }));
@@ -1199,10 +1368,12 @@ app.delete('/api/notifications/:id', asyncHandler(async (req, res) => {
   requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getEventRecordForUser(data, currentUser);
   const before = activeEvent.notifications.length;
+  const removedNotification = findById(activeEvent.notifications || [], req.params.id);
   activeEvent.notifications = activeEvent.notifications.filter((notification) => notification.id !== req.params.id);
   if (activeEvent.notifications.length === before) {
     return res.status(404).json({ error: 'Notification not found.' });
   }
+  addAuditLog(activeEvent, currentUser, 'notification.deleted', 'notification', `Deleted reminder ${removedNotification?.title || req.params.id}.`, { notificationId: req.params.id });
   await writeStore(data);
   res.status(204).send();
 }));

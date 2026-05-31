@@ -270,3 +270,10 @@ Backend health includes `inAppNotifications` and `emailNotifications` status. Co
 ## Phase 6B: Notification Inbox
 
 Phase 6B adds an in-app inbox in the header with unread counts, mark-as-read actions, and member-safe filtering. Members can see only reminders addressed to them for events where they are tagged as participants, while Admin and Finance can see selected-event reminder history from the inbox.
+
+
+## Phase 7: Audit Trail and Security Hardening
+
+Phase 7 adds an Admin/Finance-only Audit tab, event-level audit logging, and stronger backend checks for member-owned expense actions. The health endpoint now includes `auditTrail: "enabled"` and `securityHardening: "enabled"`.
+
+See `docs/phase7-audit-security.md` for setup and testing notes.
