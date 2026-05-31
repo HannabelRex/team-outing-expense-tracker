@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import { nanoid } from 'nanoid';
+import PDFDocument from 'pdfkit';
 import { readStore, writeStore, sanitizeObject } from './storage.js';
 import {
   buildExpenseReport,
@@ -410,7 +411,8 @@ app.get('/api/health', (req, res) => {
     auth: AUTH_REQUIRED ? 'required' : 'disabled',
     multiEvent: 'enabled',
     memberEventScoping: 'enabled',
-    memberEventSwitching: 'enabled'
+    memberEventSwitching: 'enabled',
+    pdfReports: 'enabled'
   });
 });
 
@@ -951,6 +953,187 @@ app.post('/api/notifications/send-preview', asyncHandler(async (req, res) => {
   res.status(201).json(notification);
 }));
 
+
+function serverMoney(value, currency = 'INR') {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 2
+  }).format(Number(value || 0));
+}
+
+function safeReportFileName(value = 'team-outing-expense-report') {
+  return String(value)
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'team-outing-expense-report';
+}
+
+function pdfStatusLabel(status) {
+  return String(status || '').replace(/-/g, ' ') || 'pending';
+}
+
+function drawPdfTitle(doc, title, subtitle) {
+  doc.fontSize(20).font('Helvetica-Bold').fillColor('#0f172a').text(title, { align: 'left' });
+  if (subtitle) {
+    doc.moveDown(0.25).fontSize(10).font('Helvetica').fillColor('#64748b').text(subtitle);
+  }
+  doc.moveDown(0.8);
+}
+
+function drawPdfSection(doc, title) {
+  doc.moveDown(0.8);
+  doc.fontSize(13).font('Helvetica-Bold').fillColor('#0f172a').text(title);
+  doc.moveDown(0.35);
+  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#e2e8f0').stroke();
+  doc.moveDown(0.5);
+}
+
+function ensurePdfSpace(doc, needed = 90) {
+  if (doc.y + needed > doc.page.height - doc.page.margins.bottom) {
+    doc.addPage();
+  }
+}
+
+function drawKeyValueGrid(doc, items, currency) {
+  const colWidth = 250;
+  const rowHeight = 42;
+  const startX = doc.page.margins.left;
+  let x = startX;
+  let y = doc.y;
+
+  items.forEach((item, index) => {
+    ensurePdfSpace(doc, rowHeight + 8);
+    x = startX + (index % 2) * (colWidth + 16);
+    if (index > 0 && index % 2 === 0) y += rowHeight + 10;
+    if (index % 2 === 0) doc.y = y;
+
+    doc.roundedRect(x, y, colWidth, rowHeight, 8).fillAndStroke('#f8fafc', '#e2e8f0');
+    doc.fillColor('#64748b').fontSize(8).font('Helvetica-Bold').text(item.label.toUpperCase(), x + 12, y + 9, { width: colWidth - 24 });
+    doc.fillColor(item.danger ? '#be123c' : '#0f172a').fontSize(12).font('Helvetica-Bold').text(item.value, x + 12, y + 22, { width: colWidth - 24 });
+  });
+
+  doc.y = y + rowHeight + 8;
+}
+
+function drawSimpleTable(doc, columns, rows, options = {}) {
+  const { emptyText = 'No rows available.', rowHeight = 22, fontSize = 8 } = options;
+  if (!rows.length) {
+    doc.fontSize(9).font('Helvetica').fillColor('#64748b').text(emptyText);
+    return;
+  }
+
+  const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const totalWeight = columns.reduce((sum, column) => sum + (column.weight || 1), 0);
+  const widths = columns.map((column) => Math.floor((usableWidth * (column.weight || 1)) / totalWeight));
+
+  function drawHeader() {
+    ensurePdfSpace(doc, rowHeight + 8);
+    const y = doc.y;
+    let x = doc.page.margins.left;
+    doc.rect(x, y, usableWidth, rowHeight).fill('#0f172a');
+    columns.forEach((column, index) => {
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(fontSize).text(column.label, x + 5, y + 7, { width: widths[index] - 10, ellipsis: true });
+      x += widths[index];
+    });
+    doc.y = y + rowHeight;
+  }
+
+  drawHeader();
+  rows.forEach((row, rowIndex) => {
+    ensurePdfSpace(doc, rowHeight + 8);
+    if (doc.y < 80) drawHeader();
+    const y = doc.y;
+    let x = doc.page.margins.left;
+    if (rowIndex % 2 === 0) doc.rect(x, y, usableWidth, rowHeight).fill('#f8fafc');
+    columns.forEach((column, index) => {
+      const value = typeof column.value === 'function' ? column.value(row) : row[column.key];
+      doc.fillColor('#0f172a').font('Helvetica').fontSize(fontSize).text(String(value ?? ''), x + 5, y + 7, {
+        width: widths[index] - 10,
+        height: rowHeight - 8,
+        ellipsis: true
+      });
+      x += widths[index];
+    });
+    doc.y = y + rowHeight;
+  });
+  doc.moveDown(0.4);
+}
+
+function buildPdfReport(doc, activeEvent, report, generatedBy) {
+  const currency = report.event.currency || 'INR';
+  const generatedAt = new Date(report.generatedAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+  drawPdfTitle(
+    doc,
+    `${report.event.name} - Expense Report`,
+    `Generated ${generatedAt}${generatedBy?.email ? ` by ${generatedBy.email}` : ''}`
+  );
+
+  doc.fontSize(10).font('Helvetica').fillColor('#334155')
+    .text(`Date: ${report.event.date || 'N/A'}`)
+    .text(`Location: ${report.event.location || 'N/A'}`)
+    .text(`Organizer: ${report.event.organizer?.name || 'N/A'}${report.event.organizer?.email ? ` (${report.event.organizer.email})` : ''}`)
+    .text(`Event status: ${activeEvent.status || 'active'}`);
+
+  drawPdfSection(doc, 'Financial summary');
+  drawKeyValueGrid(doc, [
+    { label: 'Total budget', value: serverMoney(report.totals.totalBudget, currency) },
+    { label: 'Planned category budget', value: serverMoney(report.totals.plannedBudget, currency) },
+    { label: 'Total spent', value: serverMoney(report.totals.totalSpent, currency) },
+    { label: 'Remaining budget', value: serverMoney(report.totals.remainingBudget, currency), danger: report.totals.isOverBudget }
+  ], currency);
+
+  drawPdfSection(doc, 'Category-wise expenses');
+  drawSimpleTable(doc, [
+    { label: 'Category', key: 'name', weight: 2 },
+    { label: 'Estimated', value: (row) => serverMoney(row.estimatedCost, currency), weight: 1 },
+    { label: 'Actual', value: (row) => serverMoney(row.actualCost, currency), weight: 1 },
+    { label: 'Remaining', value: (row) => serverMoney(row.remaining, currency), weight: 1 }
+  ], report.categoryWiseExpenses, { emptyText: 'No categories available.' });
+
+  drawPdfSection(doc, 'Participant-wise contribution');
+  drawSimpleTable(doc, [
+    { label: 'Participant', key: 'name', weight: 2 },
+    { label: 'Paid', value: (row) => serverMoney(row.amountPaid, currency), weight: 1 },
+    { label: 'Owed', value: (row) => serverMoney(row.amountOwed, currency), weight: 1 },
+    { label: 'Net balance', value: (row) => serverMoney(row.netBalance, currency), weight: 1 },
+    { label: 'Status', value: (row) => pdfStatusLabel(row.paymentStatus), weight: 1 }
+  ], report.participantWiseContribution, { emptyText: 'No participants available.' });
+
+  drawPdfSection(doc, 'Settlement summary');
+  drawSimpleTable(doc, [
+    { label: 'From', key: 'fromName', weight: 2 },
+    { label: 'To', key: 'toName', weight: 2 },
+    { label: 'Amount', value: (row) => serverMoney(row.amount, currency), weight: 1 },
+    { label: 'Status', value: (row) => pdfStatusLabel(row.status), weight: 1 },
+    { label: 'Reference', value: (row) => row.transactionReference || '-', weight: 1 }
+  ], report.settlementSummary, { emptyText: 'No settlement payments needed.' });
+
+  drawPdfSection(doc, 'Expense list');
+  const participantMap = new Map(activeEvent.participants.map((participant) => [participant.id, participant.name]));
+  const categoryMap = new Map(activeEvent.categories.map((category) => [category.id, category.name]));
+  drawSimpleTable(doc, [
+    { label: 'Date', key: 'date', weight: 1 },
+    { label: 'Expense', key: 'title', weight: 2 },
+    { label: 'Category', value: (row) => categoryMap.get(row.categoryId) || 'Uncategorized', weight: 1.3 },
+    { label: 'Paid by', value: (row) => participantMap.get(row.paidByParticipantId) || 'Unknown', weight: 1.3 },
+    { label: 'Amount', value: (row) => serverMoney(row.amount, currency), weight: 1 },
+    { label: 'Approval', value: (row) => pdfStatusLabel(row.approvalStatus), weight: 1 }
+  ], activeEvent.expenses, { emptyText: 'No expenses recorded.', fontSize: 7.5 });
+
+  drawPdfSection(doc, 'Receipt references');
+  drawSimpleTable(doc, [
+    { label: 'Expense', key: 'expenseTitle', weight: 2 },
+    { label: 'Receipt file', value: (row) => row.receipt?.fileName || '-', weight: 2 },
+    { label: 'URL', value: (row) => row.receipt?.url || '-', weight: 3 }
+  ], report.receiptReferences, { emptyText: 'No receipt references attached.', fontSize: 7 });
+
+  doc.moveDown(1.2);
+  doc.fontSize(8).font('Helvetica').fillColor('#64748b')
+    .text('Designed, engineered, and deployed by Satheeshkumar Balaji.', { align: 'center' });
+}
+
 app.get('/api/reports', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
@@ -958,6 +1141,40 @@ app.get('/api/reports', asyncHandler(async (req, res) => {
   const activeEvent = getEventRecordForUser(data, currentUser);
   await writeStore(data);
   res.json(buildExpenseReport(activeEvent));
+}));
+
+
+app.get('/api/reports.pdf', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  await writeStore(data);
+  const report = buildExpenseReport(activeEvent);
+  const fileName = `${safeReportFileName(activeEvent.event.name)}-expense-report.pdf`;
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.setHeader('Cache-Control', 'no-store');
+
+  const doc = new PDFDocument({
+    size: 'A4',
+    margin: 40,
+    info: {
+      Title: `${activeEvent.event.name} - Expense Report`,
+      Author: 'Team Outing Expense Tracker',
+      Subject: 'Team outing expense report'
+    }
+  });
+
+  doc.on('error', (error) => {
+    console.error('PDF generation failed:', error);
+    if (!res.headersSent) res.status(500).json({ error: 'PDF generation failed.' });
+  });
+
+  doc.pipe(res);
+  buildPdfReport(doc, activeEvent, report, currentUser);
+  doc.end();
 }));
 
 app.get('/api/reports.csv', asyncHandler(async (req, res) => {

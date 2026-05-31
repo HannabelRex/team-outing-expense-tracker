@@ -165,6 +165,35 @@ async function api(path, options = {}) {
 }
 
 
+async function downloadApiFile(path, fileName) {
+  const headers = {};
+  if (apiAccessToken) headers.Authorization = `Bearer ${apiAccessToken}`;
+
+  const response = await fetch(`${API_BASE}${path}`, { headers });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({ error: 'Download failed.' }));
+    throw new Error(errorBody.error || 'Download failed. The file refused to leave the server.');
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function reportFileBaseName(eventName = 'team-outing') {
+  return String(eventName)
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'team-outing';
+}
+
+
 function readSavedSession() {
   try {
     const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
@@ -1127,12 +1156,42 @@ function Notifications({ setToast }) {
   );
 }
 
-function Reports({ data }) {
+function Reports({ data, setToast }) {
   const currency = data.event.currency;
+  const [busy, setBusy] = useState('');
   const pieData = data.dashboard.categorySpending.filter((category) => category.actualCost > 0).map((category) => ({ name: category.name, value: category.actualCost }));
+  const baseName = reportFileBaseName(data.event.name);
+
+  async function downloadReport(type) {
+    setBusy(type);
+    try {
+      if (type === 'pdf') {
+        await downloadApiFile('/reports.pdf', `${baseName}-expense-report.pdf`);
+        setToast('PDF report downloaded. The finance paperwork has achieved physical form.');
+      } else {
+        await downloadApiFile('/reports.csv', `${baseName}-expense-report.csv`);
+        setToast('CSV report downloaded. Spreadsheet goblins may now feast.');
+      }
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  const reportAction = (
+    <div className="flex flex-wrap gap-2">
+      <button className="btn-primary" type="button" onClick={() => downloadReport('pdf')} disabled={Boolean(busy)}>
+        <Download size={16} /> {busy === 'pdf' ? 'Preparing PDF...' : 'Export PDF'}
+      </button>
+      <button className="btn-ghost" type="button" onClick={() => downloadReport('csv')} disabled={Boolean(busy)}>
+        <Download size={16} /> {busy === 'csv' ? 'Preparing CSV...' : 'Export CSV'}
+      </button>
+    </div>
+  );
 
   return (
-    <Section title="Reports and export" icon={FileText} action={<a className="btn-primary" href="/api/reports.csv"><Download size={16} /> Export CSV</a>}>
+    <Section title="Reports and export" icon={FileText} action={reportAction}>
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="rounded-2xl bg-slate-50 p-4">
           <h3 className="font-bold text-slate-900">Event report summary</h3>
@@ -1142,14 +1201,17 @@ function Reports({ data }) {
             <div className="flex justify-between"><dt>Receipts attached</dt><dd className="font-bold">{data.expenses.filter((expense) => expense.receipt).length}</dd></div>
             <div className="flex justify-between"><dt>Settlement items</dt><dd className="font-bold">{data.settlementPlan.settlements.length}</dd></div>
           </dl>
-          <p className="mt-4 text-sm text-slate-500">PDF export can be added through a server-side renderer such as Playwright or PDFKit. This implementation includes JSON and CSV export so the basics are not held together by vibes alone.</p>
+          <div className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-600 ring-1 ring-slate-200">
+            <p className="font-bold text-slate-900">PDF export includes</p>
+            <p className="mt-2">Event details, budget summary, category spending, participant contribution, settlement summary, expense list, receipt references, and your developer signature.</p>
+          </div>
         </div>
         <div className="h-80 rounded-2xl bg-slate-50 p-4">
           {pieData.length === 0 ? <EmptyState title="No chart data" body="Add expenses to visualize spending." /> : (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={105} label>
-                  {pieData.map((entry, index) => <Cell key={entry.name} />)}
+                  {pieData.map((entry) => <Cell key={entry.name} />)}
                 </Pie>
                 <Tooltip formatter={(value) => money(value, currency)} />
               </PieChart>
@@ -1475,7 +1537,7 @@ export default function App() {
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
-        {activeTab === 'reports' && <Reports data={data} />}
+        {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications setToast={setToast} />}
         {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
       </div>

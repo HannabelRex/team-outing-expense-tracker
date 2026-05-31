@@ -254,3 +254,8 @@ This version supports multiple outing events. Admin and Finance users can access
 After deploying the backend, `/api/health` should include `"multiEvent": "enabled"`.
 
 See `docs/phase4-multi-event-management.md` for the full test checklist.
+
+
+## Phase 5: PDF Reports
+
+Phase 5 adds authenticated PDF report export using the backend `/api/reports.pdf` endpoint. Reports include event details, budgets, category spending, participant balances, settlements, expenses, receipt references, and the developer signature.
