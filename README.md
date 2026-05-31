@@ -231,3 +231,17 @@ SUPABASE_SERVICE_ROLE_KEY
 SUPABASE_STORAGE_BUCKET=receipts
 MAX_RECEIPT_BYTES=4194304
 ```
+
+
+## Phase 3: Authentication and roles
+
+This version includes Supabase Auth login/signup and role-based API protection. See `docs/phase3-auth-and-roles.md` for deployment steps.
+
+New capabilities:
+
+- Sign up and sign in with Supabase Auth.
+- Backend API requests require a valid Supabase access token when `AUTH_REQUIRED=true`.
+- First user / existing admin can manage users and roles.
+- Admin can manage event, participants, budget, and settlements.
+- Finance can approve expenses and update settlements.
+- Members can add expenses and upload receipts, but cannot manage all admin settings.

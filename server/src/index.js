@@ -18,6 +18,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'receipts';
 const MAX_RECEIPT_BYTES = Number(process.env.MAX_RECEIPT_BYTES || 4 * 1024 * 1024);
+const AUTH_REQUIRED = String(process.env.AUTH_REQUIRED || 'false').toLowerCase() === 'true';
+const SUPABASE_AUTH_API_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || SUPABASE_SERVICE_ROLE_KEY;
 const CLIENT_URLS = (process.env.CLIENT_URL || 'http://localhost:5173')
   .split(',')
   .map((url) => url.trim().replace(/\/+$/, ''))
@@ -143,16 +145,151 @@ async function uploadReceiptToSupabase({ fileName, contentType, base64 }) {
   };
 }
 
+
+function ensureUsers(data) {
+  if (!Array.isArray(data.users)) data.users = [];
+  return data.users;
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    authUserId: user.authUserId,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt
+  };
+}
+
+async function verifySupabaseToken(token) {
+  if (!SUPABASE_URL || !SUPABASE_AUTH_API_KEY) {
+    const error = new Error('Authentication is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY or SUPABASE_PUBLISHABLE_KEY in Render.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: SUPABASE_AUTH_API_KEY
+    }
+  });
+
+  if (!response.ok) {
+    const error = new Error('Your login session is invalid or expired. Please sign in again.');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  return response.json();
+}
+
+async function authMiddleware(req, res, next) {
+  try {
+    if (!AUTH_REQUIRED) {
+      req.authUser = {
+        id: 'demo-auth-user',
+        email: 'demo@example.com',
+        user_metadata: { name: 'Demo Admin' }
+      };
+      return next();
+    }
+
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!token) {
+      const error = new Error('Please sign in to use this app.');
+      error.statusCode = 401;
+      throw error;
+    }
+
+    req.authUser = await verifySupabaseToken(token);
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+function resolveAppUser(data, authUser) {
+  const users = ensureUsers(data);
+  const email = authUser?.email || '';
+  let user = users.find((item) => item.authUserId === authUser?.id) || users.find((item) => item.email?.toLowerCase() === email.toLowerCase());
+
+  if (!user) {
+    user = {
+      id: `u-${nanoid(8)}`,
+      authUserId: authUser.id,
+      name: authUser.user_metadata?.name || email.split('@')[0] || 'Team member',
+      email,
+      role: users.length === 0 ? 'admin' : 'member',
+      createdAt: new Date().toISOString()
+    };
+    users.push(user);
+  }
+
+  if (!user.authUserId) user.authUserId = authUser.id;
+  if (!user.email && email) user.email = email;
+  user.lastLoginAt = new Date().toISOString();
+  return user;
+}
+
+function requireRole(user, allowedRoles) {
+  if (!allowedRoles.includes(user.role)) {
+    const error = new Error(`Permission denied. Required role: ${allowedRoles.join(' or ')}.`);
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function canManageExpense(user, expense) {
+  return ['admin', 'finance'].includes(user.role) || expense.createdByUserId === user.id;
+}
+
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, app: 'Team Outing Expense Tracker', storage: process.env.DATABASE_URL ? 'postgres' : 'local-json', receiptStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not-configured' });
+  res.json({ ok: true, app: 'Team Outing Expense Tracker', storage: process.env.DATABASE_URL ? 'postgres' : 'local-json', receiptStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not-configured', auth: AUTH_REQUIRED ? 'required' : 'disabled' });
 });
+
+app.use('/api', authMiddleware);
+
+app.get('/api/me', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  const user = resolveAppUser(data, req.authUser);
+  await writeStore(data);
+  res.json(publicUser(user));
+}));
+
+app.get('/api/users', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  await writeStore(data);
+  res.json(ensureUsers(data).map(publicUser));
+}));
+
+app.patch('/api/users/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const user = requireExistingItem(findById(ensureUsers(data), req.params.id), 'User');
+  const nextRole = req.body.role || user.role;
+  if (!['admin', 'member', 'finance'].includes(nextRole)) {
+    return res.status(400).json({ error: 'Role must be admin, member, or finance.' });
+  }
+  user.role = nextRole;
+  if (req.body.name) user.name = sanitizeObject(req.body).name;
+  await writeStore(data);
+  res.json(publicUser(user));
+}));
 
 app.get('/api/bootstrap', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
   const dashboard = calculateDashboard(data);
   const settlementPlan = syncSettlements(data);
   await writeStore(data);
-  res.json({ ...data, dashboard, settlementPlan });
+  res.json({ ...data, currentUser: publicUser(currentUser), users: ensureUsers(data).map(publicUser), dashboard, settlementPlan });
 }));
 
 app.get('/api/event', asyncHandler(async (req, res) => {
@@ -162,6 +299,8 @@ app.get('/api/event', asyncHandler(async (req, res) => {
 
 app.put('/api/event', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const nextEvent = {
     ...data.event,
     ...sanitizeObject(req.body),
@@ -188,6 +327,8 @@ app.get('/api/participants', asyncHandler(async (req, res) => {
 
 app.post('/api/participants', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const participant = {
     id: `p-${nanoid(8)}`,
     name: sanitizeObject(req.body).name,
@@ -209,6 +350,8 @@ app.post('/api/participants', asyncHandler(async (req, res) => {
 
 app.put('/api/participants/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const participant = requireExistingItem(findById(data.participants, req.params.id), 'Participant');
 
   Object.assign(participant, {
@@ -226,6 +369,8 @@ app.put('/api/participants/:id', asyncHandler(async (req, res) => {
 
 app.delete('/api/participants/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const usedInExpense = data.expenses.some(
     (expense) => expense.paidByParticipantId === req.params.id || expense.participantIds.includes(req.params.id)
   );
@@ -246,6 +391,8 @@ app.get('/api/categories', asyncHandler(async (req, res) => {
 
 app.post('/api/categories', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const category = {
     id: `c-${nanoid(8)}`,
     name: sanitizeObject(req.body).name,
@@ -267,6 +414,8 @@ app.post('/api/categories', asyncHandler(async (req, res) => {
 
 app.put('/api/categories/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const category = requireExistingItem(findById(data.categories, req.params.id), 'Category');
 
   category.name = req.body.name ?? category.name;
@@ -282,6 +431,8 @@ app.put('/api/categories/:id', asyncHandler(async (req, res) => {
 
 app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const usedInExpense = data.expenses.some((expense) => expense.categoryId === req.params.id);
 
   if (usedInExpense) {
@@ -310,6 +461,7 @@ app.get('/api/expenses', asyncHandler(async (req, res) => {
 
 app.post('/api/expenses', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
   const expense = {
     id: `e-${nanoid(8)}`,
     title: req.body.title,
@@ -325,7 +477,7 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
     notes: req.body.notes || '',
     receipt: req.body.receipt || null,
     approvalStatus: req.body.approvalStatus || 'pending',
-    createdByUserId: req.body.createdByUserId || 'u-admin',
+    createdByUserId: currentUser.id,
     isRecurring: Boolean(req.body.isRecurring),
     isSettledLocked: false
   };
@@ -339,7 +491,15 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
 
 app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
   const expense = requireExistingItem(findById(data.expenses, req.params.id), 'Expense');
+
+  if (!canManageExpense(currentUser, expense)) {
+    return res.status(403).json({ error: 'You can only edit expenses you created unless you are admin or finance.' });
+  }
+  if (req.body.approvalStatus && req.body.approvalStatus !== expense.approvalStatus) {
+    requireRole(currentUser, ['admin', 'finance']);
+  }
 
   if (expense.isSettledLocked && req.body.confirmSettledEdit !== true) {
     return res.status(409).json({ error: 'This expense is tied to completed settlements. Confirm before editing.' });
@@ -360,7 +520,12 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
 
 app.delete('/api/expenses/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
   const expense = requireExistingItem(findById(data.expenses, req.params.id), 'Expense');
+
+  if (!canManageExpense(currentUser, expense)) {
+    return res.status(403).json({ error: 'You can only delete expenses you created unless you are admin or finance.' });
+  }
 
   if (expense.isSettledLocked && req.query.confirm !== 'true') {
     return res.status(409).json({ error: 'Cannot delete a settled expense without confirmation.' });
@@ -386,6 +551,8 @@ app.get('/api/settlements', asyncHandler(async (req, res) => {
 
 app.patch('/api/settlements/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
   syncSettlements(data);
   const settlement = requireExistingItem(findById(data.settlements, req.params.id), 'Settlement');
 
@@ -416,6 +583,8 @@ app.get('/api/notifications', asyncHandler(async (req, res) => {
 
 app.post('/api/notifications/send-preview', asyncHandler(async (req, res) => {
   const data = await readStore();
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
   const notification = {
     id: `n-${nanoid(8)}`,
     type: req.body.type || 'payment-reminder',

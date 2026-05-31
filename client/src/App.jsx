@@ -9,6 +9,8 @@ import {
   FileText,
   Filter,
   MapPin,
+  LogOut,
+  LockKeyhole,
   Plus,
   Pencil,
   Receipt,
@@ -18,6 +20,7 @@ import {
   Save,
   Trash2,
   UploadCloud,
+  UserRound,
   Users,
   WalletCards,
   Smartphone,
@@ -38,6 +41,13 @@ import {
 } from 'recharts';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const SUPABASE_AUTH_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const SESSION_STORAGE_KEY = 'team-outing-session-v1';
+let apiAccessToken = '';
+function setApiAccessToken(token) {
+  apiAccessToken = token || '';
+}
 
 const emptyExpenseForm = {
   title: '',
@@ -137,8 +147,11 @@ function fileToBase64(file) {
 }
 
 async function api(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (apiAccessToken) headers.Authorization = `Bearer ${apiAccessToken}`;
+
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers,
     ...options
   });
 
@@ -149,6 +162,119 @@ async function api(path, options = {}) {
 
   if (response.status === 204) return null;
   return response.json();
+}
+
+
+function readSavedSession() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(session) {
+  if (!session) {
+    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+async function supabaseAuthRequest(path, payload) {
+  if (!SUPABASE_AUTH_URL || !SUPABASE_PUBLISHABLE_KEY) {
+    throw new Error('Auth is not configured in Vercel. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.');
+  }
+
+  const response = await fetch(`${SUPABASE_AUTH_URL}/auth/v1/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_PUBLISHABLE_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.error_description || body.msg || body.error || 'Authentication failed. Even the login form is being dramatic.');
+  }
+  return body;
+}
+
+function AuthScreen({ onSession, setToast }) {
+  const [mode, setMode] = useState('login');
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage('');
+    try {
+      const payload = mode === 'signup'
+        ? { email: form.email, password: form.password, data: { name: form.name || form.email.split('@')[0] } }
+        : { email: form.email, password: form.password };
+      const path = mode === 'signup' ? 'signup' : 'token?grant_type=password';
+      const session = await supabaseAuthRequest(path, payload);
+
+      if (!session.access_token && mode === 'signup') {
+        setMessage('Account created. Check your email if confirmation is enabled in Supabase, because apparently even email wants paperwork.');
+        return;
+      }
+
+      onSession(session);
+      setToast(mode === 'signup' ? 'Account created and signed in.' : 'Signed in successfully.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="grid min-h-screen place-items-center bg-slate-100 px-4 py-10 text-slate-900">
+      <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-soft ring-1 ring-slate-200">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="rounded-2xl bg-slate-950 p-3 text-white"><LockKeyhole size={22} /></div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-500">Team Outing Expense Tracker</p>
+            <h1 className="text-2xl font-black text-slate-950">{mode === 'signup' ? 'Create account' : 'Sign in'}</h1>
+          </div>
+        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          {mode === 'signup' && (
+            <label className="field-label">Name
+              <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your name" />
+            </label>
+          )}
+          <label className="field-label">Email
+            <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" required />
+          </label>
+          <label className="field-label">Password
+            <input className="input" type="password" minLength="6" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Minimum 6 characters" required />
+          </label>
+
+          {message && <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">{message}</div>}
+
+          <button className="btn-primary w-full justify-center" type="submit" disabled={busy}>
+            {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
+          </button>
+        </form>
+
+        <button
+          className="mt-4 w-full text-sm font-bold text-slate-600 hover:text-slate-950"
+          type="button"
+          onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
+        >
+          {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create an account'}
+        </button>
+      </div>
+    </main>
+  );
 }
 
 function money(value, currency = 'INR') {
@@ -946,18 +1072,81 @@ function InstallAppButton({ setToast }) {
   );
 }
 
-function Roles() {
+function Roles({ data, reload, setToast }) {
+  const [busyUserId, setBusyUserId] = useState('');
+  const currentUser = data.currentUser;
+  const users = data.users || [];
+
+  async function updateRole(userId, role) {
+    setBusyUserId(userId);
+    try {
+      await api(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role }) });
+      setToast('Role updated. Power redistributed, hopefully responsibly.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusyUserId('');
+    }
+  }
+
   return (
-    <Section title="Roles and permissions" icon={ShieldCheck}>
-      <div className="grid gap-3 md:grid-cols-3">
-        {Object.entries(roleDescriptions).map(([role, description]) => (
-          <div key={role} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <p className="font-black capitalize text-slate-950">{role}</p>
-            <p className="mt-2 text-sm text-slate-600">{description}</p>
-          </div>
-        ))}
-      </div>
-    </Section>
+    <div className="space-y-5">
+      <Section title="Current signed-in user" icon={UserRound}>
+        <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-100">
+          <p className="text-sm text-slate-500">Signed in as</p>
+          <p className="mt-1 text-lg font-black text-slate-950">{currentUser?.name || currentUser?.email}</p>
+          <p className="text-sm text-slate-600">{currentUser?.email}</p>
+          <span className={statusBadge(currentUser?.role || 'member')}>{currentUser?.role || 'member'}</span>
+        </div>
+      </Section>
+
+      <Section title="Roles and permissions" icon={ShieldCheck}>
+        <div className="grid gap-3 md:grid-cols-3">
+          {Object.entries(roleDescriptions).map(([role, description]) => (
+            <div key={role} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <p className="font-black capitalize text-slate-950">{role}</p>
+              <p className="mt-2 text-sm text-slate-600">{description}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="User access" icon={Users}>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="p-3">Name</th>
+                <th className="p-3">Email</th>
+                <th className="p-3">Role</th>
+                <th className="p-3">Last login</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => (
+                <tr key={user.id} className="border-t border-slate-100">
+                  <td className="p-3 font-semibold text-slate-800">{user.name}</td>
+                  <td className="p-3 text-slate-600">{user.email}</td>
+                  <td className="p-3">
+                    {currentUser?.role === 'admin' ? (
+                      <select className="input max-w-40" value={user.role} disabled={busyUserId === user.id} onChange={(e) => updateRole(user.id, e.target.value)}>
+                        <option value="admin">Admin</option>
+                        <option value="member">Member</option>
+                        <option value="finance">Finance</option>
+                      </select>
+                    ) : (
+                      <span className={statusBadge(user.role)}>{user.role}</span>
+                    )}
+                  </td>
+                  <td className="p-3 text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Not recorded'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+    </div>
   );
 }
 
@@ -967,6 +1156,20 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  const [session, setSession] = useState(() => readSavedSession());
+
+  function handleSession(nextSession) {
+    setSession(nextSession);
+    saveSession(nextSession);
+    setApiAccessToken(nextSession?.access_token || '');
+  }
+
+  function logout() {
+    handleSession(null);
+    setData(null);
+    setError('');
+    setToast('Signed out. The app will now stop trusting you, professionally.');
+  }
 
   async function reload() {
     try {
@@ -982,8 +1185,13 @@ export default function App() {
   }
 
   useEffect(() => {
-    reload();
-  }, []);
+    setApiAccessToken(session?.access_token || '');
+    if (session?.access_token) {
+      reload();
+    } else {
+      setLoading(false);
+    }
+  }, [session?.access_token]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1002,6 +1210,10 @@ export default function App() {
     ['notifications', 'Notifications'],
     ['roles', 'Roles']
   ];
+
+  if (!session?.access_token) {
+    return <AuthScreen onSession={handleSession} setToast={setToast} />;
+  }
 
   if (loading && !data) {
     return <div className="grid min-h-screen place-items-center bg-slate-100 text-slate-700">Loading outing finances, because chaos needs a progress spinner.</div>;
@@ -1027,9 +1239,15 @@ export default function App() {
                 <span className="inline-flex items-center gap-2"><Users size={16} /> {data.participants.length} participants</span>
               </div>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              {data.currentUser && (
+                <div className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/20">
+                  {data.currentUser.name || data.currentUser.email} · {data.currentUser.role}
+                </div>
+              )}
               <InstallAppButton setToast={setToast} />
               <button className="rounded-2xl bg-white px-4 py-2 font-bold text-slate-950" onClick={reload} type="button"><RefreshCw className="inline" size={16} /> Refresh</button>
+              <button className="rounded-2xl bg-white px-4 py-2 font-bold text-slate-950" onClick={logout} type="button"><LogOut className="inline" size={16} /> Sign out</button>
             </div>
           </div>
         </div>
@@ -1057,7 +1275,7 @@ export default function App() {
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} />}
         {activeTab === 'notifications' && <Notifications setToast={setToast} />}
-        {activeTab === 'roles' && <Roles />}
+        {activeTab === 'roles' && <Roles data={data} reload={reload} setToast={setToast} />}
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
