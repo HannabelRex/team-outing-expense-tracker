@@ -412,7 +412,8 @@ app.get('/api/health', (req, res) => {
     multiEvent: 'enabled',
     memberEventScoping: 'enabled',
     memberEventSwitching: 'enabled',
-    pdfReports: 'enabled'
+    pdfReports: 'enabled',
+    pdfCurrencyMode: 'code'
   });
 });
 
@@ -955,11 +956,16 @@ app.post('/api/notifications/send-preview', asyncHandler(async (req, res) => {
 
 
 function serverMoney(value, currency = 'INR') {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency,
+  // PDFKit's built-in Helvetica font does not reliably render currency symbols
+  // such as the Indian Rupee glyph. Use an ASCII currency code so PDF output
+  // is portable across browsers, PDF viewers, and hosting environments.
+  const amount = Number(value || 0);
+  const currencyCode = String(currency || 'INR').toUpperCase();
+  const formattedAmount = new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2
-  }).format(Number(value || 0));
+  }).format(amount);
+  return `${currencyCode} ${formattedAmount}`;
 }
 
 function safeReportFileName(value = 'team-outing-expense-report') {
