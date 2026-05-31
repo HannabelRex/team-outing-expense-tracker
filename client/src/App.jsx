@@ -9,14 +9,17 @@ import {
   Filter,
   MapPin,
   Plus,
+  Pencil,
   Receipt,
   RefreshCw,
   Search,
   ShieldCheck,
+  Save,
   Trash2,
   Users,
   WalletCards,
-  Smartphone
+  Smartphone,
+  X
 } from 'lucide-react';
 import {
   Bar,
@@ -56,6 +59,65 @@ const roleDescriptions = {
   member: 'Can view expenses, add personal expenses, upload receipt references, and mark payments.',
   finance: 'Can review and approve expenses before settlement.'
 };
+function formatSplitLines(splits = [], valueKey) {
+  return splits.map((split) => `${split.participantId}:${split[valueKey]}`).join('\n');
+}
+
+function buildDefaultExpenseForm(data, expense = null) {
+  if (expense) {
+    return {
+      title: expense.title || '',
+      amount: String(expense.amount ?? ''),
+      categoryId: expense.categoryId || data.categories[0]?.id || '',
+      date: expense.date || new Date().toISOString().slice(0, 10),
+      paidByParticipantId: expense.paidByParticipantId || data.participants[0]?.id || '',
+      participantIds: expense.participantIds || [],
+      splitMethod: expense.splitMethod || 'equal',
+      customSplitsText: formatSplitLines(expense.customSplits, 'amount'),
+      percentageSplitsText: formatSplitLines(expense.percentageSplits, 'percentage'),
+      paymentMethod: expense.paymentMethod || 'UPI',
+      notes: expense.notes || '',
+      receiptFileName: expense.receipt?.fileName || '',
+      isRecurring: Boolean(expense.isRecurring),
+      approvalStatus: expense.approvalStatus || 'pending'
+    };
+  }
+
+  return {
+    ...emptyExpenseForm,
+    categoryId: data.categories[0]?.id || '',
+    paidByParticipantId: data.participants[0]?.id || '',
+    participantIds: data.participants.filter((p) => p.attendanceStatus !== 'not-attending').map((p) => p.id)
+  };
+}
+
+function parseSplitText(text, key) {
+  if (!text.trim()) return [];
+  return text.split('\n').filter(Boolean).map((line) => {
+    const [participantId, rawValue] = line.split(':').map((part) => part.trim());
+    return { participantId, [key]: Number(rawValue) };
+  });
+}
+
+function buildExpensePayload(form) {
+  const payload = {
+    ...form,
+    amount: Number(form.amount),
+    receipt: form.receiptFileName ? { fileName: form.receiptFileName, url: `receipt-placeholder://${form.receiptFileName}` } : null,
+    customSplits: parseSplitText(form.customSplitsText, 'amount'),
+    percentageSplits: parseSplitText(form.percentageSplitsText, 'percentage')
+  };
+
+  delete payload.customSplitsText;
+  delete payload.percentageSplitsText;
+  delete payload.receiptFileName;
+  return payload;
+}
+
+function showActionError(setToast, err) {
+  setToast(err?.message || 'Action failed. The app tried, the universe objected.');
+}
+
 
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -231,24 +293,62 @@ function EventSetup({ data, reload, setToast }) {
 
 function Participants({ data, reload, setToast }) {
   const [form, setForm] = useState({ name: '', emailOrPhone: '', attendanceStatus: 'attending' });
+  const [editingId, setEditingId] = useState('');
+  const [editForm, setEditForm] = useState({ name: '', emailOrPhone: '', attendanceStatus: 'attending', paymentStatus: 'pending' });
+  const [busy, setBusy] = useState(false);
+
+  function startEdit(participant) {
+    setEditingId(participant.id);
+    setEditForm({
+      name: participant.name || '',
+      emailOrPhone: participant.emailOrPhone || '',
+      attendanceStatus: participant.attendanceStatus || 'attending',
+      paymentStatus: participant.paymentStatus || 'pending'
+    });
+  }
 
   async function addParticipant(event) {
     event.preventDefault();
-    await api('/participants', { method: 'POST', body: JSON.stringify(form) });
-    setForm({ name: '', emailOrPhone: '', attendanceStatus: 'attending' });
-    setToast('Participant added. The attendee herd grows.');
-    reload();
+    setBusy(true);
+    try {
+      await api('/participants', { method: 'POST', body: JSON.stringify(form) });
+      setForm({ name: '', emailOrPhone: '', attendanceStatus: 'attending' });
+      setToast('Participant added successfully. The attendee herd grows.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function updateParticipant(id, patch) {
-    await api(`/participants/${id}`, { method: 'PUT', body: JSON.stringify(patch) });
-    reload();
+  async function saveParticipant(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/participants/${editingId}`, { method: 'PUT', body: JSON.stringify(editForm) });
+      setEditingId('');
+      setToast('Participant updated successfully. Behold, editable humans.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteParticipant(id) {
-    await api(`/participants/${id}`, { method: 'DELETE' });
-    setToast('Participant removed. Quietly, because HR frowns on drama.');
-    reload();
+    if (!window.confirm('Remove this participant? This is blocked if they are linked to expenses.')) return;
+    setBusy(true);
+    try {
+      await api(`/participants/${id}`, { method: 'DELETE' });
+      setToast('Participant removed. Quietly, because HR frowns on drama.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -261,7 +361,7 @@ function Participants({ data, reload, setToast }) {
           <option value="tentative">Tentative</option>
           <option value="not-attending">Not attending</option>
         </select>
-        <button className="btn-primary" type="submit"><Plus size={16} /> Add</button>
+        <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
       </form>
 
       <div className="overflow-x-auto">
@@ -277,20 +377,47 @@ function Participants({ data, reload, setToast }) {
           </thead>
           <tbody>
             {data.participants.map((participant) => (
-              <tr key={participant.id} className="border-t border-slate-100">
-                <td className="p-3 font-semibold text-slate-800">{participant.name}</td>
-                <td className="p-3 text-slate-600">{participant.emailOrPhone}</td>
-                <td className="p-3">
-                  <select className="rounded-xl border border-slate-200 px-3 py-1" value={participant.attendanceStatus} onChange={(e) => updateParticipant(participant.id, { attendanceStatus: e.target.value })}>
-                    <option value="attending">Attending</option>
-                    <option value="tentative">Tentative</option>
-                    <option value="not-attending">Not attending</option>
-                  </select>
-                </td>
-                <td className="p-3"><span className={statusBadge(participant.paymentStatus)}>{participant.paymentStatus}</span></td>
-                <td className="p-3">
-                  <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
-                </td>
+              <tr key={participant.id} className="border-t border-slate-100 align-top">
+                {editingId === participant.id ? (
+                  <>
+                    <td className="p-3"><input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required /></td>
+                    <td className="p-3"><input className="input" value={editForm.emailOrPhone} onChange={(e) => setEditForm({ ...editForm, emailOrPhone: e.target.value })} required /></td>
+                    <td className="p-3">
+                      <select className="input" value={editForm.attendanceStatus} onChange={(e) => setEditForm({ ...editForm, attendanceStatus: e.target.value })}>
+                        <option value="attending">Attending</option>
+                        <option value="tentative">Tentative</option>
+                        <option value="not-attending">Not attending</option>
+                      </select>
+                    </td>
+                    <td className="p-3">
+                      <select className="input" value={editForm.paymentStatus} onChange={(e) => setEditForm({ ...editForm, paymentStatus: e.target.value })}>
+                        <option value="pending">Pending</option>
+                        <option value="partially-paid">Partially paid</option>
+                        <option value="completed">Completed</option>
+                        <option value="settled">Settled</option>
+                      </select>
+                    </td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button className="btn-ghost" type="button" onClick={saveParticipant} disabled={busy}><Save size={15} /> Save</button>
+                        <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="p-3 font-semibold text-slate-800">{participant.name}</td>
+                    <td className="p-3 text-slate-600">{participant.emailOrPhone}</td>
+                    <td className="p-3"><span className={statusBadge(participant.attendanceStatus)}>{participant.attendanceStatus}</span></td>
+                    <td className="p-3"><span className={statusBadge(participant.paymentStatus)}>{participant.paymentStatus}</span></td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button className="btn-ghost" onClick={() => startEdit(participant)} type="button"><Pencil size={15} /> Edit</button>
+                        <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
+                      </div>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -302,19 +429,58 @@ function Participants({ data, reload, setToast }) {
 
 function BudgetPlanning({ data, reload, setToast }) {
   const [form, setForm] = useState({ name: '', estimatedCost: '' });
+  const [editingId, setEditingId] = useState('');
+  const [editForm, setEditForm] = useState({ name: '', estimatedCost: '' });
+  const [busy, setBusy] = useState(false);
   const currency = data.event.currency;
 
   async function addCategory(event) {
     event.preventDefault();
-    await api('/categories', { method: 'POST', body: JSON.stringify(form) });
-    setForm({ name: '', estimatedCost: '' });
-    setToast('Budget category added. A new bucket for money to disappear into.');
-    reload();
+    setBusy(true);
+    try {
+      await api('/categories', { method: 'POST', body: JSON.stringify(form) });
+      setForm({ name: '', estimatedCost: '' });
+      setToast('Budget category added. A new bucket for money to disappear into.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEdit(category) {
+    setEditingId(category.id);
+    setEditForm({ name: category.name, estimatedCost: String(category.estimatedCost ?? 0) });
+  }
+
+  async function saveCategory(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/categories/${editingId}`, { method: 'PUT', body: JSON.stringify(editForm) });
+      setEditingId('');
+      setToast('Budget category updated. The spreadsheet spirits are appeased.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteCategory(id) {
-    await api(`/categories/${id}`, { method: 'DELETE' });
-    reload();
+    if (!window.confirm('Delete this category? This is blocked if expenses already use it.')) return;
+    setBusy(true);
+    try {
+      await api(`/categories/${id}`, { method: 'DELETE' });
+      setToast('Budget category deleted. One less place for money to vanish.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -322,23 +488,39 @@ function BudgetPlanning({ data, reload, setToast }) {
       <form onSubmit={addCategory} className="mb-5 grid gap-3 md:grid-cols-[1fr_180px_auto]">
         <input className="input" placeholder="Category name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
         <input className="input" placeholder="Estimated cost" type="number" min="0" value={form.estimatedCost} onChange={(e) => setForm({ ...form, estimatedCost: e.target.value })} required />
-        <button className="btn-primary" type="submit"><Plus size={16} /> Add</button>
+        <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
       </form>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {data.dashboard.categorySpending.map((category) => (
           <div key={category.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-bold text-slate-900">{category.name}</p>
-                <p className="text-sm text-slate-500">Estimated {money(category.estimatedCost, currency)}</p>
-              </div>
-              <button className="btn-icon" type="button" onClick={() => deleteCategory(category.id)}><Trash2 size={15} /></button>
-            </div>
-            <div className="mt-4 h-2 rounded-full bg-slate-200">
-              <div className="h-2 rounded-full bg-slate-900" style={{ width: `${Math.min((category.actualCost / Math.max(category.estimatedCost, 1)) * 100, 100)}%` }} />
-            </div>
-            <p className="mt-2 text-sm text-slate-600">Actual {money(category.actualCost, currency)} · Remaining {money(category.remaining, currency)}</p>
+            {editingId === category.id ? (
+              <form onSubmit={saveCategory} className="space-y-3">
+                <input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                <input className="input" type="number" min="0" value={editForm.estimatedCost} onChange={(e) => setEditForm({ ...editForm, estimatedCost: e.target.value })} required />
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn-ghost" type="submit" disabled={busy}><Save size={15} /> Save</button>
+                  <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
+                </div>
+              </form>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-slate-900">{category.name}</p>
+                    <p className="text-sm text-slate-500">Estimated {money(category.estimatedCost, currency)}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button className="btn-icon" type="button" onClick={() => startEdit(category)} aria-label="Edit category"><Pencil size={15} /></button>
+                    <button className="btn-icon" type="button" onClick={() => deleteCategory(category.id)} aria-label="Delete category"><Trash2 size={15} /></button>
+                  </div>
+                </div>
+                <div className="mt-4 h-2 rounded-full bg-slate-200">
+                  <div className="h-2 rounded-full bg-slate-900" style={{ width: `${Math.min((category.actualCost / Math.max(category.estimatedCost, 1)) * 100, 100)}%` }} />
+                </div>
+                <p className="mt-2 text-sm text-slate-600">Actual {money(category.actualCost, currency)} · Remaining {money(category.remaining, currency)}</p>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -347,26 +529,44 @@ function BudgetPlanning({ data, reload, setToast }) {
 }
 
 function Expenses({ data, reload, setToast }) {
-  const [form, setForm] = useState(() => ({
-    ...emptyExpenseForm,
-    categoryId: data.categories[0]?.id || '',
-    paidByParticipantId: data.participants[0]?.id || '',
-    participantIds: data.participants.filter((p) => p.attendanceStatus !== 'not-attending').map((p) => p.id)
-  }));
-  const [filters, setFilters] = useState({ query: '', categoryId: '', paidByParticipantId: '', paymentStatus: '', fromDate: '', toDate: '' });
+  const [form, setForm] = useState(() => buildDefaultExpenseForm(data));
+  const [editingExpenseId, setEditingExpenseId] = useState('');
+  const [filters, setFilters] = useState({ query: '', categoryId: '', paidByParticipantId: '', approvalStatus: '', fromDate: '', toDate: '' });
+  const [busy, setBusy] = useState(false);
   const currency = data.event.currency;
 
+  const expenseRows = useMemo(() => {
+    const categoryMap = new Map(data.categories.map((category) => [category.id, category.name]));
+    const participantMap = new Map(data.participants.map((participant) => [participant.id, participant.name]));
+    return data.expenses.map((expense) => ({
+      ...expense,
+      categoryName: categoryMap.get(expense.categoryId) || 'Uncategorized',
+      paidByName: participantMap.get(expense.paidByParticipantId) || 'Unknown'
+    }));
+  }, [data.categories, data.expenses, data.participants]);
+
   const filteredExpenses = useMemo(() => {
-    return data.dashboard.expenses.filter((expense) => {
+    return expenseRows.filter((expense) => {
       const matchesQuery = !filters.query || `${expense.title} ${expense.notes}`.toLowerCase().includes(filters.query.toLowerCase());
       const matchesCategory = !filters.categoryId || expense.categoryId === filters.categoryId;
       const matchesPaidBy = !filters.paidByParticipantId || expense.paidByParticipantId === filters.paidByParticipantId;
-      const matchesStatus = !filters.paymentStatus || expense.approvalStatus === filters.paymentStatus;
+      const matchesStatus = !filters.approvalStatus || expense.approvalStatus === filters.approvalStatus;
       const matchesFrom = !filters.fromDate || expense.date >= filters.fromDate;
       const matchesTo = !filters.toDate || expense.date <= filters.toDate;
       return matchesQuery && matchesCategory && matchesPaidBy && matchesStatus && matchesFrom && matchesTo;
     });
-  }, [data.dashboard.expenses, filters]);
+  }, [expenseRows, filters]);
+
+  function resetForm() {
+    setEditingExpenseId('');
+    setForm(buildDefaultExpenseForm(data));
+  }
+
+  function startEditExpense(expense) {
+    setEditingExpenseId(expense.id);
+    setForm(buildDefaultExpenseForm(data, expense));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   function toggleParticipant(id) {
     const next = form.participantIds.includes(id)
@@ -375,54 +575,59 @@ function Expenses({ data, reload, setToast }) {
     setForm({ ...form, participantIds: next });
   }
 
-  function parseSplitText(text, key) {
-    if (!text.trim()) return [];
-    return text.split('\n').map((line) => {
-      const [participantId, rawValue] = line.split(':').map((part) => part.trim());
-      return { participantId, [key]: Number(rawValue) };
-    });
-  }
-
-  async function addExpense(event) {
+  async function saveExpense(event) {
     event.preventDefault();
-    const payload = {
-      ...form,
-      amount: Number(form.amount),
-      receipt: form.receiptFileName ? { fileName: form.receiptFileName, url: `receipt-placeholder://${form.receiptFileName}` } : null,
-      customSplits: parseSplitText(form.customSplitsText, 'amount'),
-      percentageSplits: parseSplitText(form.percentageSplitsText, 'percentage')
-    };
-
-    delete payload.customSplitsText;
-    delete payload.percentageSplitsText;
-    delete payload.receiptFileName;
-
-    await api('/expenses', { method: 'POST', body: JSON.stringify(payload) });
-    setForm({
-      ...emptyExpenseForm,
-      categoryId: data.categories[0]?.id || '',
-      paidByParticipantId: data.participants[0]?.id || '',
-      participantIds: data.participants.filter((p) => p.attendanceStatus !== 'not-attending').map((p) => p.id)
-    });
-    setToast('Expense added and balances recalculated. The math goblin has spoken.');
-    reload();
+    setBusy(true);
+    try {
+      const payload = buildExpensePayload(form);
+      if (editingExpenseId) {
+        await api(`/expenses/${editingExpenseId}`, { method: 'PUT', body: JSON.stringify({ ...payload, confirmSettledEdit: true }) });
+        setToast('Expense updated and balances recalculated. The math goblin has revised its prophecy.');
+      } else {
+        await api('/expenses', { method: 'POST', body: JSON.stringify(payload) });
+        setToast('Expense added and balances recalculated. The math goblin has spoken.');
+      }
+      resetForm();
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function approveExpense(expense, approvalStatus) {
-    await api(`/expenses/${expense.id}`, { method: 'PUT', body: JSON.stringify({ ...expense, approvalStatus }) });
-    reload();
+    setBusy(true);
+    try {
+      await api(`/expenses/${expense.id}`, { method: 'PUT', body: JSON.stringify({ approvalStatus, confirmSettledEdit: true }) });
+      setToast(`Expense ${approvalStatus}. Finance has waved its tiny stamp.`);
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function deleteExpense(id) {
-    await api(`/expenses/${id}?confirm=true`, { method: 'DELETE' });
-    setToast('Expense deleted. History is written by whoever has API access.');
-    reload();
+    if (!window.confirm('Delete this expense? Balances and settlements will recalculate.')) return;
+    setBusy(true);
+    try {
+      await api(`/expenses/${id}?confirm=true`, { method: 'DELETE' });
+      setToast('Expense deleted. History is written by whoever has API access.');
+      if (editingExpenseId === id) resetForm();
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className="space-y-6">
-      <Section title="Record an expense" icon={Receipt}>
-        <form onSubmit={addExpense} className="grid gap-4 lg:grid-cols-3">
+      <Section title={editingExpenseId ? 'Edit expense' : 'Record an expense'} icon={Receipt} action={editingExpenseId && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
+        <form onSubmit={saveExpense} className="grid gap-4 lg:grid-cols-3">
           <label className="field-label">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
           <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
           <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
@@ -453,15 +658,16 @@ function Expenses({ data, reload, setToast }) {
 
           <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.isRecurring} onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })} /> Recurring/shared expense</label>
-          <div className="lg:col-span-3"><button className="btn-primary" type="submit"><Plus size={16} /> Save expense</button></div>
+          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
         </form>
       </Section>
 
       <Section title="Expense list" icon={Filter}>
-        <div className="mb-4 grid gap-3 lg:grid-cols-6">
+        <div className="mb-4 grid gap-3 lg:grid-cols-7">
           <label className="relative lg:col-span-2"><Search className="absolute left-3 top-3 text-slate-400" size={16} /><input className="input pl-10" placeholder="Search expenses" value={filters.query} onChange={(e) => setFilters({ ...filters, query: e.target.value })} /></label>
           <select className="input" value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })}><option value="">All categories</option>{data.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
           <select className="input" value={filters.paidByParticipantId} onChange={(e) => setFilters({ ...filters, paidByParticipantId: e.target.value })}><option value="">Paid by anyone</option>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select>
+          <select className="input" value={filters.approvalStatus} onChange={(e) => setFilters({ ...filters, approvalStatus: e.target.value })}><option value="">Any status</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
           <input className="input" type="date" value={filters.fromDate} onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })} />
           <input className="input" type="date" value={filters.toDate} onChange={(e) => setFilters({ ...filters, toDate: e.target.value })} />
         </div>
@@ -491,9 +697,10 @@ function Expenses({ data, reload, setToast }) {
                     <td className="p-3"><span className={statusBadge(expense.approvalStatus)}>{expense.approvalStatus}</span></td>
                     <td className="p-3">
                       <div className="flex flex-wrap gap-2">
-                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'approved')}>Approve</button>
-                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'rejected')}>Reject</button>
-                        <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteExpense(expense.id)}><Trash2 size={15} /> Delete</button>
+                        <button className="btn-ghost" type="button" onClick={() => startEditExpense(expense)}><Pencil size={15} /> Edit</button>
+                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'approved')} disabled={busy}>Approve</button>
+                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'rejected')} disabled={busy}>Reject</button>
+                        <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteExpense(expense.id)} disabled={busy}><Trash2 size={15} /> Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -779,8 +986,7 @@ export default function App() {
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
-          Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} 
-               © 2026 Team Outing Expense Tracker · Designed, engineered, and deployed by Satheeshkumar Balaji.
+        Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>
   );

@@ -16,12 +16,13 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const CLIENT_URLS = (process.env.CLIENT_URL || 'http://localhost:5173')
   .split(',')
-  .map((url) => url.trim())
+  .map((url) => url.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || CLIENT_URLS.includes(origin)) return callback(null, true);
+    const normalizedOrigin = origin?.replace(/\/+$/, '');
+    if (!origin || CLIENT_URLS.includes(normalizedOrigin)) return callback(null, true);
     return callback(new Error(`CORS blocked origin: ${origin}`));
   }
 }));
@@ -123,6 +124,10 @@ app.put('/api/participants/:id', asyncHandler(async (req, res) => {
     ...participant,
     ...sanitizeObject(req.body)
   });
+
+  if (!participant.name || !participant.emailOrPhone) {
+    return res.status(400).json({ error: 'Participant name and email or phone are required.' });
+  }
 
   await writeStore(data);
   res.json(participant);
