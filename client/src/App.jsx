@@ -779,7 +779,7 @@ export default function App() {
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
-        Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency}.
+          Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>
   );
