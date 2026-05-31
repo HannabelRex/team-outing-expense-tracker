@@ -543,6 +543,8 @@ app.get('/api/health', (req, res) => {
     passwordReset: 'enabled',
     unassignedMemberEmptyState: 'enabled',
     financeParticipantEventManagement: 'enabled',
+    memberBudgetReadOnly: 'enabled',
+    financeBudgetManagement: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -968,7 +970,7 @@ app.post('/api/categories', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const category = {
@@ -995,7 +997,7 @@ app.put('/api/categories/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const category = requireExistingItem(findById(activeEvent.categories, req.params.id), 'Category');
@@ -1023,7 +1025,7 @@ app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin']);
+  requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
   const category = requireExistingItem(findById(activeEvent.categories, req.params.id), 'Category');

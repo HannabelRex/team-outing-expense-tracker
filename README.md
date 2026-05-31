@@ -291,3 +291,8 @@ Members with no assigned events can now log in and see a helpful empty dashboard
 ## Phase 7C: Access Permissions Hotfix
 
 This update makes Event setup and Participant management available only to Admin and Finance users. Members can still view participants and event details, but cannot add participants or change event setup. Backend permissions enforce the same rule.
+
+
+## Phase 7D: App Icon + Budget Permission Hotfix
+
+This update replaces the PWA app icon with the new Team Outing Expense Tracker design and makes Budget read-only for Members. Admin and Finance users can add, edit, and delete budget categories. Members can view Budget but cannot modify it. Backend category write APIs enforce the same rule.

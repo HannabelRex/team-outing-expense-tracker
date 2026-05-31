@@ -918,7 +918,7 @@ function Participants({ data, reload, setToast, canManageParticipants }) {
   );
 }
 
-function BudgetPlanning({ data, reload, setToast }) {
+function BudgetPlanning({ data, reload, setToast, canManageBudget }) {
   const [form, setForm] = useState({ name: '', estimatedCost: '' });
   const [editingId, setEditingId] = useState('');
   const [editForm, setEditForm] = useState({ name: '', estimatedCost: '' });
@@ -927,6 +927,10 @@ function BudgetPlanning({ data, reload, setToast }) {
 
   async function addCategory(event) {
     event.preventDefault();
+    if (!canManageBudget) {
+      setToast('Budget is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
     setBusy(true);
     try {
       await api('/categories', { method: 'POST', body: JSON.stringify(form) });
@@ -941,12 +945,20 @@ function BudgetPlanning({ data, reload, setToast }) {
   }
 
   function startEdit(category) {
+    if (!canManageBudget) {
+      setToast('Budget is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
     setEditingId(category.id);
     setEditForm({ name: category.name, estimatedCost: String(category.estimatedCost ?? 0) });
   }
 
   async function saveCategory(event) {
     event.preventDefault();
+    if (!canManageBudget) {
+      setToast('Budget is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
     setBusy(true);
     try {
       await api(`/categories/${editingId}`, { method: 'PUT', body: JSON.stringify(editForm) });
@@ -961,6 +973,10 @@ function BudgetPlanning({ data, reload, setToast }) {
   }
 
   async function deleteCategory(id) {
+    if (!canManageBudget) {
+      setToast('Budget is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
     if (!window.confirm('Delete this category? This is blocked if expenses already use it.')) return;
     setBusy(true);
     try {
@@ -976,16 +992,24 @@ function BudgetPlanning({ data, reload, setToast }) {
 
   return (
     <Section title="Budget planning" icon={WalletCards}>
-      <form onSubmit={addCategory} className="mb-5 grid gap-3 md:grid-cols-[1fr_180px_auto]">
-        <input className="input" placeholder="Category name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        <input className="input" placeholder="Estimated cost" type="number" min="0" value={form.estimatedCost} onChange={(e) => setForm({ ...form, estimatedCost: e.target.value })} required />
-        <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
-      </form>
+      {!canManageBudget && (
+        <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          Budget is read-only for members. Admin and Finance users can add, edit, or remove budget categories.
+        </div>
+      )}
+
+      {canManageBudget && (
+        <form onSubmit={addCategory} className="mb-5 grid gap-3 md:grid-cols-[1fr_180px_auto]">
+          <input className="input" placeholder="Category name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          <input className="input" placeholder="Estimated cost" type="number" min="0" value={form.estimatedCost} onChange={(e) => setForm({ ...form, estimatedCost: e.target.value })} required />
+          <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
+        </form>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {data.dashboard.categorySpending.map((category) => (
           <div key={category.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            {editingId === category.id ? (
+            {canManageBudget && editingId === category.id ? (
               <form onSubmit={saveCategory} className="space-y-3">
                 <input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                 <input className="input" type="number" min="0" value={editForm.estimatedCost} onChange={(e) => setEditForm({ ...editForm, estimatedCost: e.target.value })} required />
@@ -1001,10 +1025,12 @@ function BudgetPlanning({ data, reload, setToast }) {
                     <p className="font-bold text-slate-900">{category.name}</p>
                     <p className="text-sm text-slate-500">Estimated {money(category.estimatedCost, currency)}</p>
                   </div>
-                  <div className="flex gap-2">
-                    <button className="btn-icon" type="button" onClick={() => startEdit(category)} aria-label="Edit category"><Pencil size={15} /></button>
-                    <button className="btn-icon" type="button" onClick={() => deleteCategory(category.id)} aria-label="Delete category"><Trash2 size={15} /></button>
-                  </div>
+                  {canManageBudget && (
+                    <div className="flex gap-2">
+                      <button className="btn-icon" type="button" onClick={() => startEdit(category)} aria-label="Edit category"><Pencil size={15} /></button>
+                      <button className="btn-icon" type="button" onClick={() => deleteCategory(category.id)} aria-label="Delete category"><Trash2 size={15} /></button>
+                    </div>
+                  )}
                 </div>
                 <div className="mt-4 h-2 rounded-full bg-slate-200">
                   <div className="h-2 rounded-full bg-slate-900" style={{ width: `${Math.min((category.actualCost / Math.max(category.estimatedCost, 1)) * 100, 100)}%` }} />
@@ -1981,6 +2007,7 @@ export default function App() {
   const canViewAudit = currentRole === 'admin' || currentRole === 'finance';
   const canManageEventSetup = currentRole === 'admin' || currentRole === 'finance';
   const canManageParticipants = currentRole === 'admin' || currentRole === 'finance';
+  const canManageBudget = currentRole === 'admin' || currentRole === 'finance';
   const unreadInboxCount = inboxItems.filter((item) => !item.read).length;
 
   const tabs = useMemo(() => {
@@ -2127,7 +2154,7 @@ export default function App() {
         {activeTab === 'events' && canViewEvents && <EventsConsole data={data} reload={reload} setToast={setToast} onSwitchEvent={switchEvent} />}
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
         {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} canManageParticipants={canManageParticipants} />}
-        {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />}
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
