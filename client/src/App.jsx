@@ -779,7 +779,8 @@ export default function App() {
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
-          Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
+          Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} 
+          © 2026 Team Outing Expense Tracker · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>
   );
