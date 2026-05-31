@@ -424,6 +424,7 @@ app.get('/api/health', (req, res) => {
     pdfReports: 'enabled',
     pdfCurrencyMode: 'code',
     inAppNotifications: 'enabled',
+    notificationInbox: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -1042,6 +1043,104 @@ async function sendNotificationEmails(notification, eventRecord) {
   return notification.recipients;
 }
 
+
+function notificationVisibleToUser(notification = {}, eventRecord = {}, user = {}) {
+  if (['admin', 'finance'].includes(user.role)) return true;
+
+  const userEmail = normalizeIdentity(user.email);
+  const matchingParticipantIds = new Set(
+    (eventRecord.participants || [])
+      .filter((participant) => participantMatchesUser(participant, user))
+      .map((participant) => participant.id)
+  );
+
+  return (notification.recipients || []).some((recipient) => {
+    const recipientEmail = normalizeIdentity(recipient.email);
+    return (recipientEmail && recipientEmail === userEmail) || matchingParticipantIds.has(recipient.participantId);
+  });
+}
+
+function inboxNotification(notification = {}, eventRecord = {}, user = {}) {
+  const readByUserIds = Array.isArray(notification.readByUserIds) ? notification.readByUserIds : [];
+  const isAdminLike = ['admin', 'finance'].includes(user.role);
+  const userEmail = normalizeIdentity(user.email);
+  const matchingParticipantIds = new Set(
+    (eventRecord.participants || [])
+      .filter((participant) => participantMatchesUser(participant, user))
+      .map((participant) => participant.id)
+  );
+  const recipients = isAdminLike
+    ? (notification.recipients || [])
+    : (notification.recipients || []).filter((recipient) => {
+      const recipientEmail = normalizeIdentity(recipient.email);
+      return (recipientEmail && recipientEmail === userEmail) || matchingParticipantIds.has(recipient.participantId);
+    });
+
+  return {
+    id: notification.id,
+    type: notification.type,
+    title: notification.title,
+    message: notification.message,
+    channel: notification.channel,
+    status: notification.status,
+    emailStatus: notification.emailStatus,
+    recipientCount: recipients.length,
+    recipients,
+    createdByName: notification.createdByName,
+    createdAt: notification.createdAt,
+    read: readByUserIds.includes(user.id)
+  };
+}
+
+app.get('/api/notification-inbox', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  const rows = (activeEvent.notifications || [])
+    .filter((notification) => notificationVisibleToUser(notification, activeEvent, currentUser))
+    .map((notification) => inboxNotification(notification, activeEvent, currentUser))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  await writeStore(data);
+  res.json(rows);
+}));
+
+app.post('/api/notification-inbox/:id/read', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  const notification = requireExistingItem(findById(activeEvent.notifications || [], req.params.id), 'Notification');
+  if (!notificationVisibleToUser(notification, activeEvent, currentUser)) {
+    const error = new Error('You can only mark notifications visible to your account. Nice try, tiny permission gremlin.');
+    error.statusCode = 403;
+    throw error;
+  }
+  notification.readByUserIds = Array.isArray(notification.readByUserIds) ? notification.readByUserIds : [];
+  if (!notification.readByUserIds.includes(currentUser.id)) notification.readByUserIds.push(currentUser.id);
+  await writeStore(data);
+  res.json(inboxNotification(notification, activeEvent, currentUser));
+}));
+
+app.post('/api/notification-inbox/read-all', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  let updated = 0;
+  activeEvent.notifications = Array.isArray(activeEvent.notifications) ? activeEvent.notifications : [];
+  for (const notification of activeEvent.notifications) {
+    if (!notificationVisibleToUser(notification, activeEvent, currentUser)) continue;
+    notification.readByUserIds = Array.isArray(notification.readByUserIds) ? notification.readByUserIds : [];
+    if (!notification.readByUserIds.includes(currentUser.id)) {
+      notification.readByUserIds.push(currentUser.id);
+      updated += 1;
+    }
+  }
+  await writeStore(data);
+  res.json({ updated });
+}));
+
 app.get('/api/notifications', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
@@ -1079,6 +1178,7 @@ app.post('/api/notifications/send-preview', asyncHandler(async (req, res) => {
       ...recipient,
       deliveryStatus: ['email', 'both'].includes(req.body.channel) ? 'pending' : 'in-app-queued'
     })),
+    readByUserIds: [],
     createdByUserId: currentUser.id,
     createdByName: currentUser.name || currentUser.email,
     createdAt: new Date().toISOString()

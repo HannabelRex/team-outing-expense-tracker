@@ -265,3 +265,8 @@ Phase 5 adds authenticated PDF report export using the backend `/api/reports.pdf
 This version adds event-wise reminder history and optional SMTP email delivery. Admin and Finance users can send reminders to all participants, participants with pending balances, or selected participants. Members cannot access the Notifications tab.
 
 Backend health includes `inAppNotifications` and `emailNotifications` status. Configure SMTP variables in Render to enable real email sending. Without SMTP, reminders are still stored in the app as in-app history.
+
+
+## Phase 6B: Notification Inbox
+
+Phase 6B adds an in-app inbox in the header with unread counts, mark-as-read actions, and member-safe filtering. Members can see only reminders addressed to them for events where they are tagged as participants, while Admin and Finance can see selected-event reminder history from the inbox.
