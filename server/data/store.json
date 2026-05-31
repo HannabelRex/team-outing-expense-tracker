@@ -1,0 +1,158 @@
+{
+  "users": [
+    {
+      "id": "u-admin",
+      "name": "Anika Rao",
+      "email": "anika.rao@example.com",
+      "role": "admin"
+    },
+    {
+      "id": "u-finance",
+      "name": "Finance Manager",
+      "email": "finance@example.com",
+      "role": "finance"
+    }
+  ],
+  "event": {
+    "id": "evt-001",
+    "name": "Munnar Team Recharge",
+    "date": "2026-07-18",
+    "location": "Munnar, Kerala",
+    "estimatedBudget": 85000,
+    "currency": "INR",
+    "organizer": {
+      "name": "Anika Rao",
+      "email": "anika.rao@example.com",
+      "phone": "+91 90000 00001"
+    },
+    "status": "planning",
+    "settlementDeadline": "2026-07-25"
+  },
+  "participants": [
+    {
+      "id": "p-001",
+      "name": "Anika Rao",
+      "emailOrPhone": "anika.rao@example.com",
+      "attendanceStatus": "attending",
+      "paymentStatus": "pending",
+      "amountPaid": 0,
+      "amountOwed": 0
+    },
+    {
+      "id": "p-002",
+      "name": "Ravi Kumar",
+      "emailOrPhone": "ravi.kumar@example.com",
+      "attendanceStatus": "attending",
+      "paymentStatus": "pending",
+      "amountPaid": 0,
+      "amountOwed": 0
+    },
+    {
+      "id": "p-003",
+      "name": "Meera Iyer",
+      "emailOrPhone": "meera.iyer@example.com",
+      "attendanceStatus": "attending",
+      "paymentStatus": "pending",
+      "amountPaid": 0,
+      "amountOwed": 0
+    },
+    {
+      "id": "p-004",
+      "name": "Kabir Shah",
+      "emailOrPhone": "kabir.shah@example.com",
+      "attendanceStatus": "tentative",
+      "paymentStatus": "pending",
+      "amountPaid": 0,
+      "amountOwed": 0
+    }
+  ],
+  "categories": [
+    {
+      "id": "c-travel",
+      "name": "Travel",
+      "estimatedCost": 30000
+    },
+    {
+      "id": "c-food",
+      "name": "Food",
+      "estimatedCost": 22000
+    },
+    {
+      "id": "c-accommodation",
+      "name": "Accommodation",
+      "estimatedCost": 25000
+    },
+    {
+      "id": "c-activities",
+      "name": "Activities",
+      "estimatedCost": 8000
+    }
+  ],
+  "expenses": [
+    {
+      "id": "e-001",
+      "title": "Advance resort booking",
+      "amount": 18000,
+      "categoryId": "c-accommodation",
+      "date": "2026-06-15",
+      "paidByParticipantId": "p-001",
+      "participantIds": ["p-001", "p-002", "p-003"],
+      "splitMethod": "equal",
+      "customSplits": [],
+      "percentageSplits": [],
+      "paymentMethod": "UPI",
+      "notes": "50% booking advance",
+      "receipt": {
+        "fileName": "resort-advance.pdf",
+        "url": "receipt-placeholder://resort-advance.pdf"
+      },
+      "approvalStatus": "approved",
+      "createdByUserId": "u-admin",
+      "isRecurring": false,
+      "isSettledLocked": false
+    },
+    {
+      "id": "e-002",
+      "title": "Bus advance",
+      "amount": 12000,
+      "categoryId": "c-travel",
+      "date": "2026-06-20",
+      "paidByParticipantId": "p-002",
+      "participantIds": ["p-001", "p-002", "p-003", "p-004"],
+      "splitMethod": "percentage",
+      "customSplits": [],
+      "percentageSplits": [
+        { "participantId": "p-001", "percentage": 25 },
+        { "participantId": "p-002", "percentage": 25 },
+        { "participantId": "p-003", "percentage": 25 },
+        { "participantId": "p-004", "percentage": 25 }
+      ],
+      "paymentMethod": "Card",
+      "notes": "Refundable booking advance",
+      "receipt": null,
+      "approvalStatus": "pending",
+      "createdByUserId": "u-admin",
+      "isRecurring": false,
+      "isSettledLocked": false
+    }
+  ],
+  "settlements": [],
+  "notifications": [
+    {
+      "id": "n-001",
+      "type": "outing-reminder",
+      "title": "Upcoming outing",
+      "message": "Reminder: Munnar Team Recharge is scheduled for 18 Jul 2026.",
+      "channel": "in-app",
+      "status": "draft"
+    },
+    {
+      "id": "n-002",
+      "type": "payment-reminder",
+      "title": "Pending contribution",
+      "message": "Some participants still have pending balances. Because spreadsheets apparently were not enough pain.",
+      "channel": "email-placeholder",
+      "status": "draft"
+    }
+  ]
+}

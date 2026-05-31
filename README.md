@@ -1,0 +1,216 @@
+# Team Outing Expense Tracker
+
+A practical full-stack application for planning, recording, splitting, approving, settling, exporting, and installing team outing expenses as a mobile-friendly Progressive Web App.
+
+## Recommended production architecture
+
+This version supports both local development and free hosted deployment:
+
+- **Frontend:** React + Vite + Tailwind CSS.
+- **Charts:** Recharts.
+- **Mobile install:** PWA manifest, service worker, install prompt, icons, mobile-safe UI metadata.
+- **Backend:** Node.js + Express REST API.
+- **Local storage:** JSON file persistence in `server/data/store.json` for easy local setup.
+- **Production storage:** Supabase PostgreSQL through `DATABASE_URL` using the `app_state` JSONB table.
+- **Deployment:** Vercel for frontend, Render for backend, Supabase for database, GitHub for source control.
+- **Authentication:** Mock roles are represented as admin, member, and finance manager. For real company rollout, replace this with Supabase Auth, Auth0, Clerk, Microsoft Entra ID, or another identity provider.
+- **Receipt upload:** Placeholder receipt references are implemented. For production file storage, use Supabase Storage, Cloudinary, or S3-compatible storage.
+
+The calculation-heavy logic lives in `server/src/calculations.js` so the settlement math remains server-authoritative instead of being scattered through the UI like confetti after a budget meeting.
+
+## Features included
+
+- Event setup and editing
+- Participant add/remove/update and attendance status
+- Budget categories with planned vs actual tracking
+- Expense recording with equal, selected, custom, and percentage split support
+- Receipt reference placeholder
+- Expense approval status
+- Dashboard cards and charts
+- Participant paid/owed/net balances
+- Settlement recommendation algorithm
+- Settlement status tracking with transaction reference/proof placeholders
+- Notification/reminder placeholder endpoint
+- JSON report endpoint and CSV export
+- Data validation for required fields, negative amounts, invalid splits, and settled expense edits
+- Mock role descriptions for admin, member, and finance manager
+- Mobile-installable PWA shell
+- Supabase PostgreSQL persistence for free hosted usage
+
+## Project structure
+
+```text
+team-outing-expense-tracker/
+  .env.example
+  package.json
+  README.md
+  docs/
+    database-schema.sql
+    free-mobile-pwa-deployment.md
+    supabase-app-state-schema.sql
+  client/
+    index.html
+    package.json
+    postcss.config.js
+    tailwind.config.js
+    vercel.json
+    vite.config.js
+    public/
+      manifest.webmanifest
+      service-worker.js
+      icons/
+        icon-192.png
+        icon-512.png
+    src/
+      App.jsx
+      main.jsx
+      styles.css
+  server/
+    package.json
+    data/
+      store.json
+    src/
+      calculations.js
+      calculations.test.js
+      index.js
+      storage.js
+```
+
+## Local setup
+
+### 1. Install dependencies
+
+From the project root:
+
+```bash
+npm install
+npm run install:all
+```
+
+### 2. Run the app locally
+
+```bash
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+Backend:
+
+```text
+http://localhost:4000/api/health
+```
+
+Without `DATABASE_URL`, the backend uses local JSON storage.
+
+## Production setup using free tools
+
+Read the full beginner-friendly guide:
+
+```text
+docs/free-mobile-pwa-deployment.md
+```
+
+Short version:
+
+1. Push this folder to GitHub.
+2. Create a free Supabase project.
+3. Copy the Supabase PostgreSQL connection string.
+4. Deploy `server` on Render.
+5. Add `DATABASE_URL`, `PGSSLMODE=require`, and `CLIENT_URL` to Render.
+6. Replace the backend URL in `client/vercel.json`.
+7. Deploy `client` on Vercel.
+8. Open the Vercel URL on mobile and install it.
+
+## Environment variables
+
+Server:
+
+```text
+PORT=4000
+CLIENT_URL=http://localhost:5173
+DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT-REF].supabase.co:5432/postgres
+PGSSLMODE=require
+```
+
+Client:
+
+```text
+VITE_API_BASE_URL=/api
+```
+
+Usually Vercel rewrites `/api/*` to the Render backend, so you do not need to expose the backend URL directly in the client bundle.
+
+## API summary
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/api/health` | Health check and storage mode |
+| GET | `/api/bootstrap` | Full app data, dashboard, settlements |
+| GET/PUT | `/api/event` | Read/update event |
+| GET/POST | `/api/participants` | List/create participants |
+| PUT/DELETE | `/api/participants/:id` | Update/delete participant |
+| GET/POST | `/api/categories` | List/create budget categories |
+| PUT/DELETE | `/api/categories/:id` | Update/delete category |
+| GET/POST | `/api/expenses` | List/create expenses |
+| PUT/DELETE | `/api/expenses/:id` | Update/delete expenses |
+| GET | `/api/dashboard` | Dashboard totals and chart data |
+| GET | `/api/settlements` | Generated settlement plan |
+| PATCH | `/api/settlements/:id` | Update settlement payment status |
+| POST | `/api/notifications/send-preview` | Queue mock reminder |
+| GET | `/api/reports` | JSON expense report |
+| GET | `/api/reports.csv` | CSV participant contribution export |
+
+## Expense split logic
+
+The backend supports:
+
+1. **Equal split:** Divides amount across selected participants and adjusts the final participant by any rounding difference.
+2. **Selected split:** Same as equal split, but explicitly limited to selected participants.
+3. **Custom amount split:** Requires custom amounts to equal the expense amount.
+4. **Percentage split:** Requires percentages to total 100%.
+
+## Settlement algorithm
+
+The app calculates each participant's net balance:
+
+```text
+net balance = amount paid - amount owed
+```
+
+Then it:
+
+1. Sorts debtors by how much they owe.
+2. Sorts creditors by how much they should receive.
+3. Greedily matches the largest debtor with the largest creditor.
+4. Emits simplified payment instructions until balances are cleared.
+
+This produces fewer settlement transactions than asking everyone to pay everyone else, because humanity has already suffered enough through reimbursement threads.
+
+## Mobile install notes
+
+The frontend includes:
+
+- `client/public/manifest.webmanifest`
+- `client/public/service-worker.js`
+- App icons at 192x192 and 512x512
+- Install button in the app header
+- iPhone home-screen metadata
+- Android install metadata
+
+Android Chrome usually shows **Install app**. iPhone Safari uses **Share > Add to Home Screen**.
+
+## Logic test
+
+```bash
+cd server
+npm run test:logic
+```
+
+## Production caution
+
+This app now supports persistent Supabase PostgreSQL storage, but mock authentication is still not real authentication. For actual company usage, add real login and role-based access before storing sensitive finance data.
