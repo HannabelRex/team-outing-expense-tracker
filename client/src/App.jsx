@@ -1208,17 +1208,38 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const tabs = [
-    ['dashboard', 'Dashboard'],
-    ['event', 'Event setup'],
-    ['participants', 'Participants'],
-    ['budget', 'Budget'],
-    ['expenses', 'Expenses'],
-    ['settlements', 'Settlements'],
-    ['reports', 'Reports'],
-    ['notifications', 'Notifications'],
-    ['roles', 'Roles']
-  ];
+  const currentRole = data?.currentUser?.role || 'member';
+  const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
+  const canViewRoles = currentRole === 'admin';
+
+  const tabs = useMemo(() => {
+    const visibleTabs = [
+      ['dashboard', 'Dashboard'],
+      ['event', 'Event setup'],
+      ['participants', 'Participants'],
+      ['budget', 'Budget'],
+      ['expenses', 'Expenses'],
+      ['settlements', 'Settlements'],
+      ['reports', 'Reports']
+    ];
+
+    if (canViewNotifications) {
+      visibleTabs.push(['notifications', 'Notifications']);
+    }
+
+    if (canViewRoles) {
+      visibleTabs.push(['roles', 'Roles']);
+    }
+
+    return visibleTabs;
+  }, [canViewNotifications, canViewRoles]);
+
+  useEffect(() => {
+    const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
+    if (!canAccessActiveTab) {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, tabs]);
 
   if (!session?.access_token) {
     return <AuthScreen onSession={handleSession} setToast={setToast} />;
@@ -1287,8 +1308,8 @@ export default function App() {
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} />}
-        {activeTab === 'notifications' && <Notifications setToast={setToast} />}
-        {activeTab === 'roles' && <Roles data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'notifications' && canViewNotifications && <Notifications setToast={setToast} />}
+        {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
