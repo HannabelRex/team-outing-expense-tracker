@@ -321,10 +321,21 @@ function publicUser(user) {
     name: user.name,
     email: user.email,
     role: user.role,
+    accessStatus: user.accessStatus || 'active',
+    disabledAt: user.disabledAt || null,
+    disabledByUserId: user.disabledByUserId || '',
     activeEventId: user.activeEventId || '',
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt
   };
+}
+
+function userHasAccess(user) {
+  return (user?.accessStatus || 'active') !== 'disabled';
+}
+
+function activeAdminCount(users) {
+  return users.filter((user) => user.role === 'admin' && userHasAccess(user)).length;
 }
 
 async function verifySupabaseToken(token) {
@@ -396,6 +407,12 @@ function resolveAppUser(data, authUser) {
 
   if (!user.authUserId) user.authUserId = authUser.id;
   if (!user.email && email) user.email = email;
+  if (!user.accessStatus) user.accessStatus = 'active';
+  if (!userHasAccess(user)) {
+    const error = new Error('Your access to this app has been removed by an administrator. Please contact the event admin if this is unexpected. Bureaucracy finally found the login screen.');
+    error.statusCode = 403;
+    throw error;
+  }
   user.lastLoginAt = new Date().toISOString();
   return user;
 }
@@ -494,6 +511,8 @@ app.get('/api/health', (req, res) => {
     notificationInbox: 'enabled',
     auditTrail: 'enabled',
     securityHardening: 'enabled',
+    userAccessControl: 'enabled',
+    passwordReset: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -542,6 +561,92 @@ app.patch('/api/users/:id', asyncHandler(async (req, res) => {
   });
   await writeStore(data);
   res.json(publicUser(user));
+}));
+
+app.delete('/api/users/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const users = ensureUsers(data);
+  const user = requireExistingItem(findById(users, req.params.id), 'User');
+
+  if (user.id === currentUser.id) {
+    return res.status(400).json({ error: 'You cannot remove your own access while signed in. That is how admins lock themselves out and then blame the furniture.' });
+  }
+  if (user.role === 'admin' && activeAdminCount(users) <= 1) {
+    return res.status(409).json({ error: 'At least one active admin must remain.' });
+  }
+
+  const beforeStatus = user.accessStatus || 'active';
+  user.accessStatus = 'disabled';
+  user.disabledAt = new Date().toISOString();
+  user.disabledByUserId = currentUser.id;
+  const auditEvent = currentEventForAudit(data, currentUser);
+  addAuditLog(auditEvent, currentUser, 'user.access_removed', 'user', `Removed app access for ${user.email || user.name}.`, {
+    targetUserId: user.id,
+    targetEmail: user.email,
+    beforeStatus,
+    afterStatus: user.accessStatus
+  });
+  await writeStore(data);
+  res.json(publicUser(user));
+}));
+
+app.post('/api/users/:id/restore', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const user = requireExistingItem(findById(ensureUsers(data), req.params.id), 'User');
+  const beforeStatus = user.accessStatus || 'active';
+  user.accessStatus = 'active';
+  user.disabledAt = null;
+  user.disabledByUserId = '';
+  const auditEvent = currentEventForAudit(data, currentUser);
+  addAuditLog(auditEvent, currentUser, 'user.access_restored', 'user', `Restored app access for ${user.email || user.name}.`, {
+    targetUserId: user.id,
+    targetEmail: user.email,
+    beforeStatus,
+    afterStatus: user.accessStatus
+  });
+  await writeStore(data);
+  res.json(publicUser(user));
+}));
+
+app.post('/api/users/:id/password-reset', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const user = requireExistingItem(findById(ensureUsers(data), req.params.id), 'User');
+  if (!user.email) return res.status(400).json({ error: 'This user does not have an email address for password reset.' });
+  if (!SUPABASE_URL || !SUPABASE_AUTH_API_KEY) {
+    return res.status(503).json({ error: 'Supabase Auth is not configured for password reset.' });
+  }
+  const redirectTo = CLIENT_URLS[0] || '';
+  const recoverUrl = `${SUPABASE_URL}/auth/v1/recover${redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : ''}`;
+  const response = await fetch(recoverUrl, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_AUTH_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ email: user.email })
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(`Password reset email could not be sent. ${body || response.statusText}`);
+    error.statusCode = 502;
+    throw error;
+  }
+  const auditEvent = currentEventForAudit(data, currentUser);
+  addAuditLog(auditEvent, currentUser, 'user.password_reset_requested', 'user', `Sent password reset email to ${user.email}.`, {
+    targetUserId: user.id,
+    targetEmail: user.email
+  });
+  await writeStore(data);
+  res.json({ ok: true });
 }));
 
 app.get('/api/bootstrap', asyncHandler(async (req, res) => {

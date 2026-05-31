@@ -257,15 +257,34 @@ function saveSession(session) {
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
-async function supabaseAuthRequest(path, payload) {
+function readRecoverySessionFromUrl() {
+  const hash = window.location.hash?.replace(/^#/, '') || '';
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  if (params.get('type') !== 'recovery' || !params.get('access_token')) return null;
+  return {
+    access_token: params.get('access_token'),
+    refresh_token: params.get('refresh_token') || '',
+    token_type: params.get('token_type') || 'bearer',
+    expires_in: Number(params.get('expires_in') || 3600),
+    expires_at: Math.floor(Date.now() / 1000) + Number(params.get('expires_in') || 3600)
+  };
+}
+
+async function supabaseAuthRequest(path, payload, extra = {}) {
   if (!SUPABASE_AUTH_URL || !SUPABASE_PUBLISHABLE_KEY) {
     throw new Error('Auth is not configured in Vercel. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.');
   }
 
-  const response = await fetch(`${SUPABASE_AUTH_URL}/auth/v1/${path}`, {
-    method: 'POST',
+  const url = extra.redirectTo
+    ? `${SUPABASE_AUTH_URL}/auth/v1/${path}${path.includes('?') ? '&' : '?'}redirect_to=${encodeURIComponent(extra.redirectTo)}`
+    : `${SUPABASE_AUTH_URL}/auth/v1/${path}`;
+
+  const response = await fetch(url, {
+    method: extra.method || 'POST',
     headers: {
       apikey: SUPABASE_PUBLISHABLE_KEY,
+      ...(extra.accessToken ? { Authorization: `Bearer ${extra.accessToken}` } : {}),
       'Content-Type': 'application/json'
     },
     body: JSON.stringify(payload)
@@ -279,8 +298,9 @@ async function supabaseAuthRequest(path, payload) {
 }
 
 function AuthScreen({ onSession, setToast }) {
-  const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [recoverySession] = useState(() => readRecoverySessionFromUrl());
+  const [mode, setMode] = useState(() => recoverySession ? 'reset' : 'login');
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -289,6 +309,25 @@ function AuthScreen({ onSession, setToast }) {
     setBusy(true);
     setMessage('');
     try {
+      if (mode === 'forgot') {
+        await supabaseAuthRequest('recover', { email: form.email }, { redirectTo: window.location.origin });
+        setMessage('Password reset link sent. Check your inbox and spam folder, because email delivery likes hide-and-seek.');
+        return;
+      }
+
+      if (mode === 'reset') {
+        if (!recoverySession?.access_token) throw new Error('Password reset session is missing. Open the reset link from your email again.');
+        if (form.password.length < 6) throw new Error('Password must be at least 6 characters. Security is needy like that.');
+        if (form.password !== form.confirmPassword) throw new Error('Passwords do not match. Tiny typo, large annoyance.');
+        await supabaseAuthRequest('user', { password: form.password }, { method: 'PUT', accessToken: recoverySession.access_token });
+        saveSession(recoverySession);
+        setApiAccessToken(recoverySession.access_token);
+        window.history.replaceState(null, '', window.location.pathname);
+        onSession(recoverySession);
+        setToast('Password reset successfully. You are signed in again.');
+        return;
+      }
+
       const payload = mode === 'signup'
         ? { email: form.email, password: form.password, data: { name: form.name || form.email.split('@')[0] } }
         : { email: form.email, password: form.password };
@@ -312,6 +351,8 @@ function AuthScreen({ onSession, setToast }) {
     }
   }
 
+  const title = mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Reset password' : mode === 'reset' ? 'Set new password' : 'Sign in';
+
   return (
     <main className="grid min-h-screen place-items-center bg-slate-100 px-4 py-10 text-slate-900">
       <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-soft ring-1 ring-slate-200">
@@ -319,7 +360,7 @@ function AuthScreen({ onSession, setToast }) {
           <div className="rounded-2xl bg-slate-950 p-3 text-white"><LockKeyhole size={22} /></div>
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-500">Team Outing Expense Tracker</p>
-            <h1 className="text-2xl font-black text-slate-950">{mode === 'signup' ? 'Create account' : 'Sign in'}</h1>
+            <h1 className="text-2xl font-black text-slate-950">{title}</h1>
           </div>
         </div>
 
@@ -329,27 +370,50 @@ function AuthScreen({ onSession, setToast }) {
               <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your name" />
             </label>
           )}
-          <label className="field-label">Email
-            <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" required />
-          </label>
-          <label className="field-label">Password
-            <input className="input" type="password" minLength="6" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Minimum 6 characters" required />
-          </label>
+          {mode !== 'reset' && (
+            <label className="field-label">Email
+              <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" required />
+            </label>
+          )}
+          {mode !== 'forgot' && (
+            <label className="field-label">{mode === 'reset' ? 'New password' : 'Password'}
+              <input className="input" type="password" minLength="6" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Minimum 6 characters" required />
+            </label>
+          )}
+          {mode === 'reset' && (
+            <label className="field-label">Confirm new password
+              <input className="input" type="password" minLength="6" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} placeholder="Re-enter password" required />
+            </label>
+          )}
 
           {message && <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">{message}</div>}
 
           <button className="btn-primary w-full justify-center" type="submit" disabled={busy}>
-            {busy ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
+            {busy ? 'Working...' : mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : mode === 'reset' ? 'Update password' : 'Sign in'}
           </button>
         </form>
 
-        <button
-          className="mt-4 w-full text-sm font-bold text-slate-600 hover:text-slate-950"
-          type="button"
-          onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
-        >
-          {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create an account'}
-        </button>
+        {mode === 'login' && (
+          <button className="mt-4 w-full text-sm font-bold text-slate-600 hover:text-slate-950" type="button" onClick={() => { setMode('forgot'); setMessage(''); }}>
+            Forgot password?
+          </button>
+        )}
+
+        {mode !== 'reset' && (
+          <button
+            className="mt-3 w-full text-sm font-bold text-slate-600 hover:text-slate-950"
+            type="button"
+            onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
+          >
+            {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create an account'}
+          </button>
+        )}
+
+        {(mode === 'forgot' || mode === 'reset') && (
+          <button className="mt-3 w-full text-sm font-bold text-slate-600 hover:text-slate-950" type="button" onClick={() => { setMode('login'); setMessage(''); }}>
+            Back to sign in
+          </button>
+        )}
       </div>
     </main>
   );
@@ -1433,7 +1497,7 @@ function Reports({ data, setToast }) {
           </dl>
           <div className="mt-4 rounded-2xl bg-white p-4 text-sm text-slate-600 ring-1 ring-slate-200">
             <p className="font-bold text-slate-900">PDF export includes</p>
-            <p className="mt-2">Event details, budget summary, category spending, participant contribution, settlement summary, expense list, receipt references, and your developer signature.</p>
+            <p className="mt-2">Event details, budget summary, category spending, participant contribution, settlement summary, expense list, receipt references.</p>
           </div>
         </div>
         <div className="h-80 rounded-2xl bg-slate-50 p-4">
@@ -1522,6 +1586,46 @@ function Roles({ data, reload, setToast }) {
     }
   }
 
+  async function removeAccess(user) {
+    if (!window.confirm(`Remove app access for ${user.email || user.name}? They will no longer be able to open the app after signing in.`)) return;
+    setBusyUserId(user.id);
+    try {
+      await api(`/users/${user.id}`, { method: 'DELETE' });
+      setToast('User access removed. The gate has been closed, politely but firmly.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusyUserId('');
+    }
+  }
+
+  async function restoreAccess(user) {
+    setBusyUserId(user.id);
+    try {
+      await api(`/users/${user.id}/restore`, { method: 'POST' });
+      setToast('User access restored. The gate creaks open again.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusyUserId('');
+    }
+  }
+
+  async function sendPasswordReset(user) {
+    if (!window.confirm(`Send password reset email to ${user.email}?`)) return;
+    setBusyUserId(user.id);
+    try {
+      await api(`/users/${user.id}/password-reset`, { method: 'POST' });
+      setToast('Password reset email sent. Now we wait for the ancient email spirits.');
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusyUserId('');
+    }
+  }
+
   return (
     <div className="space-y-5">
       <Section title="Current signed-in user" icon={UserRound}>
@@ -1545,6 +1649,9 @@ function Roles({ data, reload, setToast }) {
       </Section>
 
       <Section title="User access" icon={Users}>
+        <div className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-100">
+          Admins can remove app access, restore access, or send a Supabase password reset link. This controls app access, not whether the email account exists in the universe, sadly.
+        </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
@@ -1552,28 +1659,50 @@ function Roles({ data, reload, setToast }) {
                 <th className="p-3">Name</th>
                 <th className="p-3">Email</th>
                 <th className="p-3">Role</th>
+                <th className="p-3">Access</th>
                 <th className="p-3">Last login</th>
+                <th className="p-3">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((user) => (
-                <tr key={user.id} className="border-t border-slate-100">
-                  <td className="p-3 font-semibold text-slate-800">{user.name}</td>
-                  <td className="p-3 text-slate-600">{user.email}</td>
-                  <td className="p-3">
-                    {currentUser?.role === 'admin' ? (
-                      <select className="input max-w-40" value={user.role} disabled={busyUserId === user.id} onChange={(e) => updateRole(user.id, e.target.value)}>
-                        <option value="admin">Admin</option>
-                        <option value="member">Member</option>
-                        <option value="finance">Finance</option>
-                      </select>
-                    ) : (
-                      <span className={statusBadge(user.role)}>{user.role}</span>
-                    )}
-                  </td>
-                  <td className="p-3 text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Not recorded'}</td>
-                </tr>
-              ))}
+              {users.map((user) => {
+                const disabled = user.accessStatus === 'disabled';
+                const isCurrentUser = currentUser?.id === user.id;
+                return (
+                  <tr key={user.id} className={`border-t border-slate-100 ${disabled ? 'bg-rose-50/40' : ''}`}>
+                    <td className="p-3 font-semibold text-slate-800">{user.name}</td>
+                    <td className="p-3 text-slate-600">{user.email}</td>
+                    <td className="p-3">
+                      {currentUser?.role === 'admin' ? (
+                        <select className="input max-w-40" value={user.role} disabled={busyUserId === user.id || disabled} onChange={(e) => updateRole(user.id, e.target.value)}>
+                          <option value="admin">Admin</option>
+                          <option value="member">Member</option>
+                          <option value="finance">Finance</option>
+                        </select>
+                      ) : (
+                        <span className={statusBadge(user.role)}>{user.role}</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span className={disabled ? statusBadge('rejected') : statusBadge('approved')}>{disabled ? 'disabled' : 'active'}</span>
+                      {disabled && user.disabledAt && <p className="mt-1 text-xs text-slate-500">Removed {new Date(user.disabledAt).toLocaleString()}</p>}
+                    </td>
+                    <td className="p-3 text-slate-500">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : 'Not recorded'}</td>
+                    <td className="p-3">
+                      {currentUser?.role === 'admin' && (
+                        <div className="flex flex-wrap gap-2">
+                          <button className="btn-ghost" type="button" disabled={busyUserId === user.id || !user.email} onClick={() => sendPasswordReset(user)}>Reset password</button>
+                          {disabled ? (
+                            <button className="btn-ghost" type="button" disabled={busyUserId === user.id} onClick={() => restoreAccess(user)}>Restore access</button>
+                          ) : (
+                            <button className="btn-ghost text-rose-700" type="button" disabled={busyUserId === user.id || isCurrentUser} onClick={() => removeAccess(user)}>Remove access</button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

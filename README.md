@@ -277,3 +277,8 @@ Phase 6B adds an in-app inbox in the header with unread counts, mark-as-read act
 Phase 7 adds an Admin/Finance-only Audit tab, event-level audit logging, and stronger backend checks for member-owned expense actions. The health endpoint now includes `auditTrail: "enabled"` and `securityHardening: "enabled"`.
 
 See `docs/phase7-audit-security.md` for setup and testing notes.
+
+
+## Phase 7B: User access and password reset
+
+Adds admin controls to remove or restore user access from the Roles tab, send password reset emails, and lets users reset their password from the sign-in screen. Disabled users are blocked by the backend while audit history is preserved.
