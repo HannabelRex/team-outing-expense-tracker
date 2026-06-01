@@ -444,3 +444,17 @@ SUPABASE_SERVICE_ROLE_KEY=<configured>
 ```
 
 No Supabase Auth users are deleted. Removed Finance/Member users are deleted only from the application state, so they no longer have app access unless invited or created again.
+
+## Glassmorphism login experience hotfix
+
+The login screen has been redesigned into a premium glassmorphism experience with animated gradient background, floating receipt/budget/approval cards, a SaaS-style outing snapshot preview, and a frosted authentication card.
+
+The hotfix preserves all existing authentication flows:
+
+- Sign in
+- Signup
+- Invite-aware signup
+- Forgot password
+- Password reset
+
+No backend routes, database changes, or environment variables are required. Animations are CSS-only and support reduced-motion preferences.

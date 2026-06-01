@@ -959,68 +959,179 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
   }
 
   const title = mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Reset password' : mode === 'reset' ? 'Set new password' : 'Sign in';
+  const modeDescription = mode === 'signup'
+    ? 'Create your secure account and join the outing workspace.'
+    : mode === 'forgot'
+      ? 'Enter your email and we will send a reset link.'
+      : mode === 'reset'
+        ? 'Set a new password for your account.'
+        : 'Welcome back. Sign in to manage your outing expenses.';
+  const inviteNotice = inviteContext.token
+    ? 'Invite detected. Use the invited email to link your event access securely.'
+    : 'Built for budgets, receipts, collections, settlements, and reports.';
+  const showcaseCards = [
+    { label: 'Budget planned', value: 'INR 1,00,000', icon: WalletCards, className: 'auth-float-one' },
+    { label: 'Receipts captured', value: '18 uploaded', icon: Receipt, className: 'auth-float-two' },
+    { label: 'Approvals pending', value: '4 reviews', icon: Bell, className: 'auth-float-three' },
+    { label: 'Settlements tracked', value: 'INR 12,500', icon: CheckCircle2, className: 'auth-float-four' }
+  ];
 
   return (
-    <main className="grid min-h-screen place-items-center bg-slate-100 px-4 py-10 text-slate-900">
-      <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-soft ring-1 ring-slate-200">
-        <div className="mb-6 flex items-center gap-3">
-          <div className="rounded-2xl bg-slate-950 p-3 text-white"><LockKeyhole size={22} /></div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.25em] text-slate-500">Team Outing Expense Tracker</p>
-            <h1 className="text-2xl font-black text-slate-950">{title}</h1>
+    <main className="auth-shell relative min-h-screen overflow-hidden px-4 py-8 text-slate-950 sm:px-6 lg:px-10">
+      <div className="auth-aurora auth-aurora-one" />
+      <div className="auth-aurora auth-aurora-two" />
+      <div className="auth-aurora auth-aurora-three" />
+      <div className="auth-grid-overlay" />
+
+      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-7xl items-center gap-8 lg:grid-cols-[1.12fr_0.88fr]">
+        <section className="auth-showcase relative overflow-hidden rounded-[2rem] border border-white/35 bg-white/12 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8 lg:min-h-[680px] lg:p-10">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.32),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.22),transparent_36%)]" />
+          <div className="auth-route-line" />
+          <div className="relative z-10 flex h-full flex-col justify-between gap-8">
+            <div>
+              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-4 py-2 text-xs font-black uppercase tracking-[0.25em] text-white/85 shadow-lg backdrop-blur-md">
+                <MapPin size={15} /> Team outing control room
+              </div>
+              <h1 className="max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">
+                Plan the trip. Track the spend. Settle without spreadsheet drama.
+              </h1>
+              <p className="mt-5 max-w-2xl text-base font-semibold leading-8 text-white/78 sm:text-lg">
+                Budgets, receipts, approvals, collections, settlements, analytics, email invites, offline drafts, and daily backups in one polished workspace.
+              </p>
+            </div>
+
+            <div className="auth-dashboard-card rounded-[2rem] border border-white/25 bg-slate-950/38 p-5 shadow-2xl backdrop-blur-xl">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/80">Live outing snapshot</p>
+                  <h2 className="mt-1 text-2xl font-black text-white">Coorg team offsite</h2>
+                </div>
+                <div className="rounded-2xl bg-emerald-400/18 px-3 py-2 text-xs font-black text-emerald-100 ring-1 ring-emerald-200/30">
+                  Synced
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
+                  <p className="text-xs font-bold text-white/60">Collected</p>
+                  <p className="mt-2 text-2xl font-black">72%</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[72%] rounded-full bg-emerald-300" /></div>
+                </div>
+                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
+                  <p className="text-xs font-bold text-white/60">Approved</p>
+                  <p className="mt-2 text-2xl font-black">INR 64K</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[64%] rounded-full bg-cyan-300" /></div>
+                </div>
+                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
+                  <p className="text-xs font-bold text-white/60">Receipts</p>
+                  <p className="mt-2 text-2xl font-black">18</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[88%] rounded-full bg-amber-300" /></div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <Users className="mb-3 text-cyan-100" size={24} />
+                <p className="text-2xl font-black">24</p>
+                <p className="text-sm font-bold text-white/65">Participants</p>
+              </div>
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <ShieldCheck className="mb-3 text-emerald-100" size={24} />
+                <p className="text-2xl font-black">Daily</p>
+                <p className="text-sm font-bold text-white/65">Auto backup</p>
+              </div>
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <Wifi className="mb-3 text-amber-100" size={24} />
+                <p className="text-2xl font-black">Offline</p>
+                <p className="text-sm font-bold text-white/65">Draft sync</p>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <form onSubmit={submit} className="space-y-4">
-          {mode === 'signup' && (
-            <label className="field-label">Name
-              <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your name" />
-            </label>
-          )}
-          {mode !== 'reset' && (
-            <label className="field-label">Email
-              <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" required />
-            </label>
-          )}
-          {mode !== 'forgot' && (
-            <label className="field-label">{mode === 'reset' ? 'New password' : 'Password'}
-              <input className="input" type="password" minLength="6" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Minimum 6 characters" required />
-            </label>
-          )}
-          {mode === 'reset' && (
-            <label className="field-label">Confirm new password
-              <input className="input" type="password" minLength="6" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} placeholder="Re-enter password" required />
-            </label>
-          )}
+          {showcaseCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <div key={card.label} className={`auth-floating-card ${card.className}`}>
+                <div className="rounded-2xl bg-white/20 p-2 text-white ring-1 ring-white/25"><Icon size={18} /></div>
+                <div>
+                  <p className="text-[0.65rem] font-black uppercase tracking-[0.18em] text-white/60">{card.label}</p>
+                  <p className="text-sm font-black text-white">{card.value}</p>
+                </div>
+              </div>
+            );
+          })}
+        </section>
 
-          {message && <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">{message}</div>}
+        <section className="auth-form-wrap mx-auto w-full max-w-md">
+          <div className="auth-form-card rounded-[2rem] border border-white/60 bg-white/72 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
+            <div className="mb-6 flex items-start gap-4">
+              <div className="auth-lock-badge rounded-3xl p-3 text-white shadow-lg"><LockKeyhole size={24} /></div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-500">Team Outing Expense Tracker</p>
+                <h1 className="mt-1 text-3xl font-black text-slate-950">{title}</h1>
+                <p className="mt-2 text-sm font-bold leading-6 text-slate-500">{modeDescription}</p>
+              </div>
+            </div>
 
-          <button className="btn-primary w-full justify-center" type="submit" disabled={busy}>
-            {busy ? 'Working...' : mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : mode === 'reset' ? 'Update password' : 'Sign in'}
-          </button>
-        </form>
+            <div className="mb-5 rounded-3xl border border-cyan-100 bg-cyan-50/80 p-4 text-sm font-bold leading-6 text-cyan-900">
+              {inviteNotice}
+            </div>
 
-        {mode === 'login' && (
-          <button className="mt-4 w-full text-sm font-bold text-slate-600 hover:text-slate-950" type="button" onClick={() => { setMode('forgot'); setMessage(''); }}>
-            Forgot password?
-          </button>
-        )}
+            <form onSubmit={submit} className="space-y-4">
+              {mode === 'signup' && (
+                <label className="field-label">Name
+                  <input className="input auth-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your name" />
+                </label>
+              )}
+              {mode !== 'reset' && (
+                <label className="field-label">Email
+                  <input className="input auth-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" required />
+                </label>
+              )}
+              {mode !== 'forgot' && (
+                <label className="field-label">{mode === 'reset' ? 'New password' : 'Password'}
+                  <input className="input auth-input" type="password" minLength="6" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Minimum 6 characters" required />
+                </label>
+              )}
+              {mode === 'reset' && (
+                <label className="field-label">Confirm new password
+                  <input className="input auth-input" type="password" minLength="6" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} placeholder="Re-enter password" required />
+                </label>
+              )}
 
-        {mode !== 'reset' && (
-          <button
-            className="mt-3 w-full text-sm font-bold text-slate-600 hover:text-slate-950"
-            type="button"
-            onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
-          >
-            {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create an account'}
-          </button>
-        )}
+              {message && <div className="rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">{message}</div>}
 
-        {(mode === 'forgot' || mode === 'reset') && (
-          <button className="mt-3 w-full text-sm font-bold text-slate-600 hover:text-slate-950" type="button" onClick={() => { setMode('login'); setMessage(''); }}>
-            Back to sign in
-          </button>
-        )}
+              <button className="btn-primary auth-submit w-full justify-center" type="submit" disabled={busy}>
+                {busy ? 'Working...' : mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : mode === 'reset' ? 'Update password' : 'Sign in'}
+              </button>
+            </form>
+
+            {mode === 'login' && (
+              <button className="mt-4 w-full text-sm font-black text-slate-600 transition hover:text-slate-950" type="button" onClick={() => { setMode('forgot'); setMessage(''); }}>
+                Forgot password?
+              </button>
+            )}
+
+            {mode !== 'reset' && (
+              <button
+                className="mt-3 w-full rounded-2xl bg-slate-950/5 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-950/10 hover:text-slate-950"
+                type="button"
+                onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
+              >
+                {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create an account'}
+              </button>
+            )}
+
+            {(mode === 'forgot' || mode === 'reset') && (
+              <button className="mt-3 w-full text-sm font-black text-slate-600 transition hover:text-slate-950" type="button" onClick={() => { setMode('login'); setMessage(''); }}>
+                Back to sign in
+              </button>
+            )}
+          </div>
+          <p className="mt-5 text-center text-xs font-bold text-white/75 lg:text-slate-500">
+            Designed, engineered, and deployed by Satheeshkumar Balaji
+          </p>
+        </section>
       </div>
     </main>
   );
