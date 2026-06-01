@@ -328,9 +328,24 @@ function AuthScreen({ onSession, setToast }) {
         return;
       }
 
+      if (mode === 'signup') {
+        const normalizedEmail = form.email.trim().toLowerCase();
+        const emailCheck = await api('/auth/check-email', {
+          method: 'POST',
+          body: JSON.stringify({ email: normalizedEmail })
+        });
+        if (emailCheck.exists) {
+          setMode('login');
+          setForm({ ...form, email: normalizedEmail, password: '', confirmPassword: '' });
+          setMessage('An account already exists with this email. Please sign in instead, or use Forgot password if you cannot remember the password.');
+          setToast('Account already exists. Redirected to sign in.');
+          return;
+        }
+      }
+
       const payload = mode === 'signup'
-        ? { email: form.email, password: form.password, data: { name: form.name || form.email.split('@')[0] } }
-        : { email: form.email, password: form.password };
+        ? { email: form.email.trim().toLowerCase(), password: form.password, data: { name: form.name || form.email.split('@')[0] } }
+        : { email: form.email.trim().toLowerCase(), password: form.password };
       const path = mode === 'signup' ? 'signup' : 'token?grant_type=password';
       const session = await supabaseAuthRequest(path, payload);
 

@@ -523,6 +523,53 @@ function assertMemberExpenseParticipant(eventRecord, user, expense) {
   }
 }
 
+
+async function authEmailExists(email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    const error = new Error('Enter a valid email address.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const localUsers = ensureUsers(data);
+  if (localUsers.some((user) => String(user.email || '').trim().toLowerCase() === normalizedEmail)) {
+    return true;
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return false;
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?per_page=1000`, {
+    method: 'GET',
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(body || 'Unable to check whether this email already has an account.');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  const body = await response.json().catch(() => ({}));
+  const users = Array.isArray(body.users) ? body.users : Array.isArray(body) ? body : [];
+  return users.some((user) => String(user.email || '').trim().toLowerCase() === normalizedEmail);
+}
+
+app.post('/api/auth/check-email', asyncHandler(async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const exists = await authEmailExists(email);
+  res.json({ exists, loginRecommended: exists });
+}));
+
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
@@ -545,6 +592,8 @@ app.get('/api/health', (req, res) => {
     financeParticipantEventManagement: 'enabled',
     memberBudgetReadOnly: 'enabled',
     financeBudgetManagement: 'enabled',
+    duplicateSignupProtection: 'enabled',
+    singleAccountPerEmail: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });

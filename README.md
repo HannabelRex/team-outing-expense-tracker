@@ -296,3 +296,17 @@ This update makes Event setup and Participant management available only to Admin
 ## Phase 7D: App Icon + Budget Permission Hotfix
 
 This update replaces the PWA app icon with the new Team Outing Expense Tracker design and makes Budget read-only for Members. Admin and Finance users can add, edit, and delete budget categories. Members can view Budget but cannot modify it. Backend category write APIs enforce the same rule.
+
+
+## Phase 7E: Single account per email
+
+Phase 7E adds duplicate sign-up protection. If a user tries to create an account with an email that already exists, the app redirects them to Sign in and suggests Forgot password if needed.
+
+Health flags:
+
+```json
+{
+  "duplicateSignupProtection": "enabled",
+  "singleAccountPerEmail": "enabled"
+}
+```
