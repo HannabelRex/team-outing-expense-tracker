@@ -1044,6 +1044,11 @@ function statusBadge(status) {
     rejected: 'bg-rose-50 text-rose-700 ring-rose-200',
     completed: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
     'partially-paid': 'bg-blue-50 text-blue-700 ring-blue-200',
+    'not-required': 'bg-slate-100 text-slate-600 ring-slate-200',
+    'not-collected': 'bg-rose-50 text-rose-700 ring-rose-200',
+    'partially-collected': 'bg-blue-50 text-blue-700 ring-blue-200',
+    collected: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    'over-collected': 'bg-purple-50 text-purple-700 ring-purple-200',
     settled: 'bg-emerald-50 text-emerald-700 ring-emerald-200'
   };
 
@@ -1150,6 +1155,17 @@ function Dashboard({ data, activeTheme }) {
         <StatCard label="Remaining" value={money(dashboard.remainingBudget, currency)} danger={dashboard.isOverBudget} helper={dashboard.isOverBudget ? 'Over budget. The budget has left the group chat.' : 'Still within budget'} />
         <StatCard label="Planned category budget" value={money(dashboard.plannedBudget, currency)} helper="Sum of category estimates" />
       </div>
+
+      {dashboard.budgetCollection && dashboard.budgetCollection.participantCount > 0 && (
+        <Section title="Budget collection" icon={WalletCards}>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Suggested each" value={money(dashboard.budgetCollection.suggestedPerParticipant, currency)} helper="Based on event budget" />
+            <StatCard label="Expected collection" value={money(dashboard.budgetCollection.expectedTotal, currency)} helper="Total to collect" />
+            <StatCard label="Collected so far" value={money(dashboard.budgetCollection.collectedTotal, currency)} helper="Recorded in Budget tab" />
+            <StatCard label="Pending collection" value={money(dashboard.budgetCollection.pendingTotal, currency)} helper="Still to collect" danger={Number(dashboard.budgetCollection.pendingTotal || 0) > 0} />
+          </div>
+        </Section>
+      )}
 
       {dashboard.isOverBudget && (
         <div className="flex items-center gap-3 rounded-3xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
@@ -1919,55 +1935,300 @@ function BudgetPlanning({ data, reload, setToast, canManageBudget }) {
   }
 
   return (
-    <Section title="Budget planning" icon={WalletCards}>
-      {!canManageBudget && (
-        <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          Budget is read-only for members. Admin and Finance users can add, edit, or remove budget categories.
+    <>
+      <Section title="Budget planning" icon={WalletCards}>
+        {!canManageBudget && (
+          <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            Budget is read-only for members. Admin and Finance users can add, edit, or remove budget categories.
+          </div>
+        )}
+
+        {canManageBudget && (
+          <form onSubmit={addCategory} className="mb-5 grid gap-3 md:grid-cols-[1fr_180px_auto]">
+            <input className="input" placeholder="Category name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            <input className="input" placeholder="Estimated cost" type="number" min="0" value={form.estimatedCost} onChange={(e) => setForm({ ...form, estimatedCost: e.target.value })} required />
+            <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
+          </form>
+        )}
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {data.dashboard.categorySpending.map((category) => (
+            <div key={category.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              {canManageBudget && editingId === category.id ? (
+                <form onSubmit={saveCategory} className="space-y-3">
+                  <input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                  <input className="input" type="number" min="0" value={editForm.estimatedCost} onChange={(e) => setEditForm({ ...editForm, estimatedCost: e.target.value })} required />
+                  <div className="flex flex-wrap gap-2">
+                    <button className="btn-ghost" type="submit" disabled={busy}><Save size={15} /> Save</button>
+                    <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-bold text-slate-900">{category.name}</p>
+                      <p className="text-sm text-slate-500">Estimated {money(category.estimatedCost, currency)}</p>
+                    </div>
+                    {canManageBudget && (
+                      <div className="flex gap-2">
+                        <button className="btn-icon" type="button" onClick={() => startEdit(category)} aria-label="Edit category"><Pencil size={15} /></button>
+                        <button className="btn-icon" type="button" onClick={() => deleteCategory(category.id)} aria-label="Delete category"><Trash2 size={15} /></button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-4 h-2 rounded-full bg-slate-200">
+                    <div className="h-2 rounded-full bg-slate-900" style={{ width: `${Math.min((category.actualCost / Math.max(category.estimatedCost, 1)) * 100, 100)}%` }} />
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">Actual {money(category.actualCost, currency)} · Remaining {money(category.remaining, currency)}</p>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <BudgetCollectionTracker data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />
+    </>
+  );
+}
+
+function collectionStatusLabel(status) {
+  const labels = {
+    'not-required': 'Not required',
+    'not-collected': 'Not collected',
+    'partially-collected': 'Partially collected',
+    collected: 'Collected',
+    'over-collected': 'Over-collected'
+  };
+  return labels[status] || status || 'Unknown';
+}
+
+function BudgetCollectionTracker({ data, reload, setToast, canManageBudget }) {
+  const currency = data.event.currency;
+  const collection = data.dashboard.budgetCollection || {
+    suggestedPerParticipant: 0,
+    expectedTotal: 0,
+    collectedTotal: 0,
+    pendingTotal: 0,
+    participants: []
+  };
+  const [paymentForms, setPaymentForms] = useState({});
+  const [editingExpectedId, setEditingExpectedId] = useState('');
+  const [expectedAmount, setExpectedAmount] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  function updatePaymentForm(participantId, patch) {
+    setPaymentForms((current) => ({
+      ...current,
+      [participantId]: {
+        amount: '',
+        mode: 'UPI',
+        reference: '',
+        paidAt: new Date().toISOString().slice(0, 10),
+        ...(current[participantId] || {}),
+        ...patch
+      }
+    }));
+  }
+
+  function startExpectedEdit(row) {
+    if (!canManageBudget) return;
+    setEditingExpectedId(row.participantId);
+    setExpectedAmount(String(row.expectedAmount ?? 0));
+  }
+
+  async function saveExpectedAmount(event) {
+    event.preventDefault();
+    if (!canManageBudget) {
+      setToast('Collection tracking is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/budget-collections/${editingExpectedId}/expected`, {
+        method: 'PUT',
+        body: JSON.stringify({ expectedAmount })
+      });
+      setEditingExpectedId('');
+      setExpectedAmount('');
+      setToast('Expected collection amount updated. The budget math has been negotiated.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recalculateCollections(forceSuggested = false) {
+    if (!canManageBudget) {
+      setToast('Collection tracking is read-only for members.');
+      return;
+    }
+    if (forceSuggested && !window.confirm('Reset all expected collection amounts to the current suggested split?')) return;
+    setBusy(true);
+    try {
+      await api('/budget-collections/recalculate', {
+        method: 'POST',
+        body: JSON.stringify({ forceSuggested })
+      });
+      setToast(forceSuggested ? 'Collection amounts reset to the current suggested split.' : 'Collection tracker refreshed from the budget.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recordPayment(event, participantId) {
+    event.preventDefault();
+    if (!canManageBudget) {
+      setToast('Collection tracking is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
+    const form = paymentForms[participantId] || {};
+    setBusy(true);
+    try {
+      await api(`/budget-collections/${participantId}/payments`, {
+        method: 'POST',
+        body: JSON.stringify({
+          amount: form.amount,
+          mode: form.mode || 'UPI',
+          reference: form.reference || '',
+          paidAt: form.paidAt || new Date().toISOString().slice(0, 10)
+        })
+      });
+      updatePaymentForm(participantId, { amount: '', reference: '' });
+      setToast('Budget collection payment recorded. One less IOU haunting the trip.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deletePayment(participantId, paymentId) {
+    if (!canManageBudget) {
+      setToast('Collection tracking is read-only for members.');
+      return;
+    }
+    if (!window.confirm('Delete this collection payment record?')) return;
+    setBusy(true);
+    try {
+      await api(`/budget-collections/${participantId}/payments/${paymentId}`, { method: 'DELETE' });
+      setToast('Collection payment deleted. The ledger has been corrected, begrudgingly.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Budget collection tracker" icon={WalletCards}>
+      <div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-slate-700">
+        Suggested collection is calculated from the event budget divided by active participants. Admin and Finance users can override expected amounts and record actual collections.
+      </div>
+
+      <div className="mb-5 grid gap-3 md:grid-cols-4">
+        <StatCard label="Suggested per participant" value={money(collection.suggestedPerParticipant, currency)} helper={`${collection.participantCount || 0} participants`} />
+        <StatCard label="Expected collection" value={money(collection.expectedTotal, currency)} helper="Total to collect" />
+        <StatCard label="Collected" value={money(collection.collectedTotal, currency)} helper="Recorded receipts" />
+        <StatCard label="Pending collection" value={money(collection.pendingTotal, currency)} helper="Still to collect" danger={Number(collection.pendingTotal || 0) > 0} />
+      </div>
+
+      {canManageBudget && (
+        <div className="mb-5 flex flex-wrap gap-2">
+          <button className="btn-ghost" type="button" disabled={busy} onClick={() => recalculateCollections(false)}><RefreshCw size={16} /> Refresh collection tracker</button>
+          <button className="btn-ghost" type="button" disabled={busy} onClick={() => recalculateCollections(true)}>Reset expected to suggested</button>
         </div>
       )}
 
-      {canManageBudget && (
-        <form onSubmit={addCategory} className="mb-5 grid gap-3 md:grid-cols-[1fr_180px_auto]">
-          <input className="input" placeholder="Category name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-          <input className="input" placeholder="Estimated cost" type="number" min="0" value={form.estimatedCost} onChange={(e) => setForm({ ...form, estimatedCost: e.target.value })} required />
-          <button className="btn-primary" type="submit" disabled={busy}><Plus size={16} /> Add</button>
-        </form>
-      )}
-
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {data.dashboard.categorySpending.map((category) => (
-          <div key={category.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            {canManageBudget && editingId === category.id ? (
-              <form onSubmit={saveCategory} className="space-y-3">
-                <input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
-                <input className="input" type="number" min="0" value={editForm.estimatedCost} onChange={(e) => setEditForm({ ...editForm, estimatedCost: e.target.value })} required />
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn-ghost" type="submit" disabled={busy}><Save size={15} /> Save</button>
-                  <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
-                </div>
-              </form>
-            ) : (
-              <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-slate-900">{category.name}</p>
-                    <p className="text-sm text-slate-500">Estimated {money(category.estimatedCost, currency)}</p>
-                  </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-slate-500">
+            <tr>
+              <th className="p-3">Participant</th>
+              <th className="p-3">Expected</th>
+              <th className="p-3">Collected</th>
+              <th className="p-3">Pending</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Payments</th>
+              {canManageBudget && <th className="p-3">Record collection</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {collection.participants.length === 0 ? (
+              <tr><td colSpan={canManageBudget ? 7 : 6} className="p-6 text-center text-slate-500">Add participants first, then the tracker can calculate what to collect. Tiny detail, participants.</td></tr>
+            ) : collection.participants.map((row) => {
+              const paymentForm = paymentForms[row.participantId] || { amount: '', mode: 'UPI', reference: '', paidAt: new Date().toISOString().slice(0, 10) };
+              return (
+                <tr key={row.participantId} className="border-t border-slate-100 align-top">
+                  <td className="p-3 font-semibold text-slate-900">
+                    <div>{row.name}</div>
+                    <div className="text-xs font-normal text-slate-500">Suggested {money(row.suggestedAmount, currency)}</div>
+                  </td>
+                  <td className="p-3">
+                    {canManageBudget && editingExpectedId === row.participantId ? (
+                      <form onSubmit={saveExpectedAmount} className="flex min-w-[190px] gap-2">
+                        <input className="input" type="number" min="0" value={expectedAmount} onChange={(e) => setExpectedAmount(e.target.value)} required />
+                        <button className="btn-icon" type="submit" disabled={busy} aria-label="Save expected amount"><Save size={15} /></button>
+                        <button className="btn-icon" type="button" onClick={() => setEditingExpectedId('')} aria-label="Cancel"><X size={15} /></button>
+                      </form>
+                    ) : (
+                      <div className="space-y-1">
+                        <div className="font-bold">{money(row.expectedAmount, currency)}</div>
+                        <div className="text-xs text-slate-500">{row.isExpectedCustom ? 'Custom expected' : 'Suggested split'}</div>
+                        {canManageBudget && <button className="text-xs font-bold text-blue-700" type="button" onClick={() => startExpectedEdit(row)}>Edit expected</button>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="p-3 font-bold text-emerald-700">{money(row.collectedAmount, currency)}</td>
+                  <td className={`p-3 font-bold ${Number(row.pendingAmount || 0) > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{money(Math.max(0, row.pendingAmount), currency)}</td>
+                  <td className="p-3"><span className={statusBadge(row.status)}>{collectionStatusLabel(row.status)}</span></td>
+                  <td className="p-3">
+                    {row.payments.length === 0 ? (
+                      <span className="text-slate-400">No payments yet</span>
+                    ) : (
+                      <div className="space-y-2">
+                        {row.payments.map((payment) => (
+                          <div key={payment.id || `${row.participantId}-${payment.paidAt}-${payment.amount}`} className="rounded-xl bg-slate-50 p-2 text-xs text-slate-600">
+                            <div className="font-bold text-slate-900">{money(payment.amount, currency)} · {payment.mode}</div>
+                            <div>{payment.paidAt}{payment.reference ? ` · ${payment.reference}` : ''}</div>
+                            {canManageBudget && payment.id && <button className="mt-1 text-xs font-bold text-rose-700" type="button" onClick={() => deletePayment(row.participantId, payment.id)}>Delete</button>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                   {canManageBudget && (
-                    <div className="flex gap-2">
-                      <button className="btn-icon" type="button" onClick={() => startEdit(category)} aria-label="Edit category"><Pencil size={15} /></button>
-                      <button className="btn-icon" type="button" onClick={() => deleteCategory(category.id)} aria-label="Delete category"><Trash2 size={15} /></button>
-                    </div>
+                    <td className="p-3 min-w-[260px]">
+                      <form onSubmit={(event) => recordPayment(event, row.participantId)} className="space-y-2">
+                        <input className="input" type="number" min="0.01" step="0.01" placeholder="Amount collected" value={paymentForm.amount} onChange={(e) => updatePaymentForm(row.participantId, { amount: e.target.value })} required />
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <select className="input" value={paymentForm.mode} onChange={(e) => updatePaymentForm(row.participantId, { mode: e.target.value })}>
+                            <option>UPI</option>
+                            <option>Cash</option>
+                            <option>Bank transfer</option>
+                            <option>Card</option>
+                            <option>Other</option>
+                          </select>
+                          <input className="input" type="date" value={paymentForm.paidAt} onChange={(e) => updatePaymentForm(row.participantId, { paidAt: e.target.value })} />
+                        </div>
+                        <input className="input" placeholder="Reference / note" value={paymentForm.reference} onChange={(e) => updatePaymentForm(row.participantId, { reference: e.target.value })} />
+                        <button className="btn-primary w-full" type="submit" disabled={busy}>Record collection</button>
+                      </form>
+                    </td>
                   )}
-                </div>
-                <div className="mt-4 h-2 rounded-full bg-slate-200">
-                  <div className="h-2 rounded-full bg-slate-900" style={{ width: `${Math.min((category.actualCost / Math.max(category.estimatedCost, 1)) * 100, 100)}%` }} />
-                </div>
-                <p className="mt-2 text-sm text-slate-600">Actual {money(category.actualCost, currency)} · Remaining {money(category.remaining, currency)}</p>
-              </>
-            )}
-          </div>
-        ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </Section>
   );

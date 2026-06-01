@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateDashboard, calculateExpenseShares, generateSettlementPlan } from './calculations.js';
+import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, generateSettlementPlan } from './calculations.js';
 
 const equalExpense = {
   title: 'Snacks',
@@ -85,5 +85,38 @@ assert.equal(receiverBalance.netBalance, 30);
 const rawSettlementPlan = generateSettlementPlan(partialSettlementData);
 assert.equal(rawSettlementPlan.settlements[0].amount, 50);
 assert.equal(rawSettlementPlan.settlements[0].paidAmount, 20);
+
+
+const budgetCollectionData = {
+  event: { estimatedBudget: 9000 },
+  participants: [
+    { id: 'p1', name: 'A', emailOrPhone: 'a@test.com', attendanceStatus: 'attending' },
+    { id: 'p2', name: 'B', emailOrPhone: 'b@test.com', attendanceStatus: 'attending' },
+    { id: 'p3', name: 'C', emailOrPhone: 'c@test.com', attendanceStatus: 'attending' }
+  ],
+  categories: [],
+  expenses: [],
+  settlements: [],
+  budgetCollections: [
+    {
+      participantId: 'p1',
+      expectedAmount: 4000,
+      isExpectedCustom: true,
+      payments: [
+        { id: 'pay1', amount: 1000, mode: 'UPI', reference: 'ref1', paidAt: '2026-07-18' },
+        { id: 'pay2', amount: 500, mode: 'Cash', reference: '', paidAt: '2026-07-19' }
+      ]
+    }
+  ]
+};
+
+const collectionSummary = calculateBudgetCollections(budgetCollectionData);
+assert.equal(collectionSummary.suggestedPerParticipant, 3000);
+assert.equal(collectionSummary.expectedTotal, 10000);
+assert.equal(collectionSummary.collectedTotal, 1500);
+assert.equal(collectionSummary.pendingTotal, 8500);
+assert.equal(collectionSummary.participants.find((item) => item.participantId === 'p1').status, 'partially-collected');
+assert.equal(collectionSummary.participants.find((item) => item.participantId === 'p2').expectedAmount, 3000);
+assert.equal(calculateDashboard(budgetCollectionData).budgetCollection.collectedTotal, 1500);
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');

@@ -29,6 +29,82 @@ function normalizeMoneyShares(rawShares, totalAmount) {
   return shares;
 }
 
+function normalizeBudgetCollectionPayments(payments = []) {
+  if (!Array.isArray(payments)) return [];
+
+  return payments
+    .map((payment) => ({
+      id: payment.id || '',
+      amount: roundMoney(Number(payment.amount || 0)),
+      mode: payment.mode || payment.paymentMode || 'UPI',
+      reference: payment.reference || payment.note || '',
+      paidAt: payment.paidAt || payment.collectedAt || new Date().toISOString().slice(0, 10),
+      createdAt: payment.createdAt || null,
+      updatedAt: payment.updatedAt || null
+    }))
+    .filter((payment) => Number.isFinite(payment.amount) && payment.amount > 0);
+}
+
+function collectionStatus(expectedAmount, collectedAmount) {
+  if (expectedAmount <= EPSILON && collectedAmount <= EPSILON) return 'not-required';
+  if (collectedAmount <= EPSILON) return 'not-collected';
+  if (collectedAmount + EPSILON < expectedAmount) return 'partially-collected';
+  if (collectedAmount > expectedAmount + EPSILON) return 'over-collected';
+  return 'collected';
+}
+
+export function calculateBudgetCollections(data) {
+  const participants = Array.isArray(data.participants) ? data.participants : [];
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const storedCollections = Array.isArray(data.budgetCollections) ? data.budgetCollections : [];
+  const collectionMap = new Map(storedCollections.map((item) => [item.participantId, item]));
+  const totalBudget = roundMoney(Number(data.event?.estimatedBudget || 0));
+  const plannedBudget = roundMoney(categories.reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
+  const collectionBasis = totalBudget > 0 ? totalBudget : plannedBudget;
+  const suggestedPerParticipant = participants.length > 0 ? roundMoney(collectionBasis / participants.length) : 0;
+
+  const participantsCollection = participants.map((participant) => {
+    const stored = collectionMap.get(participant.id) || {};
+    const rawExpected = Number(stored.expectedAmount);
+    const expectedAmount = Number.isFinite(rawExpected) && rawExpected >= 0
+      ? roundMoney(rawExpected)
+      : suggestedPerParticipant;
+    const payments = normalizeBudgetCollectionPayments(stored.payments);
+    const collectedAmount = roundMoney(payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+    const pendingAmount = roundMoney(expectedAmount - collectedAmount);
+
+    return {
+      id: stored.id || `bc-${participant.id}`,
+      participantId: participant.id,
+      name: participant.name,
+      emailOrPhone: participant.emailOrPhone || participant.email || '',
+      suggestedAmount: suggestedPerParticipant,
+      expectedAmount,
+      isExpectedCustom: Boolean(stored.isExpectedCustom),
+      collectedAmount,
+      pendingAmount,
+      status: collectionStatus(expectedAmount, collectedAmount),
+      payments
+    };
+  });
+
+  const expectedTotal = roundMoney(participantsCollection.reduce((sum, item) => sum + item.expectedAmount, 0));
+  const collectedTotal = roundMoney(participantsCollection.reduce((sum, item) => sum + item.collectedAmount, 0));
+  const pendingTotal = roundMoney(expectedTotal - collectedTotal);
+
+  return {
+    totalBudget,
+    plannedBudget,
+    collectionBasis,
+    participantCount: participants.length,
+    suggestedPerParticipant,
+    expectedTotal,
+    collectedTotal,
+    pendingTotal,
+    participants: participantsCollection
+  };
+}
+
 export function validateExpensePayload(expense) {
   const requiredFields = ['title', 'amount', 'categoryId', 'date', 'paidByParticipantId', 'paymentMethod'];
   const missing = requiredFields.filter((field) => expense[field] === undefined || expense[field] === null || expense[field] === '');
@@ -217,6 +293,7 @@ export function calculateDashboard(data, options = {}) {
     categorySpending,
     participantBalances,
     spendingByPaymentMethod,
+    budgetCollection: calculateBudgetCollections(data),
     expenses: approvedOrPendingExpenses.map((expense) => ({
       ...expense,
       categoryName: categoryMap.get(expense.categoryId)?.name || 'Uncategorized',
@@ -306,6 +383,7 @@ export function buildExpenseReport(data) {
       remainingBudget: dashboard.remainingBudget,
       isOverBudget: dashboard.isOverBudget
     },
+    budgetCollection: dashboard.budgetCollection,
     categoryWiseExpenses: dashboard.categorySpending,
     participantWiseContribution: dashboard.participantBalances,
     settlementSummary: settlementPlan.settlements,

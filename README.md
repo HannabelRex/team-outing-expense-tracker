@@ -365,3 +365,41 @@ Dashboard and Analytics category charts now make budget and actual bars easier t
 ### Settlement Dashboard Reflection Hotfix
 
 Partial settlement payments now reflect in the Dashboard participant balances. The dashboard displays settlement paid/received details and adjusts the net balance after settlements while preserving the original settlement amount and paid amount in the Settlements screen.
+
+
+## Phase 17 - Budget Collection Tracker
+
+The Budget tab now includes a **Budget collection tracker** that calculates the approximate money to collect from participants based on the event budget and participant count.
+
+Admin and Finance users can:
+
+- Refresh collection records from the current budget and participant list
+- Reset expected amounts to the suggested equal split
+- Override expected collection amount per participant
+- Record collection payments with amount, payment mode, date, and reference/note
+- Delete collection payment records
+
+The Dashboard now shows Budget collection summary cards, and PDF/CSV reports include collection details. Members can view collection status but cannot edit it.
+
+New backend APIs:
+
+```text
+GET /api/budget-collections
+POST /api/budget-collections/recalculate
+PUT /api/budget-collections/:participantId/expected
+POST /api/budget-collections/:participantId/payments
+PUT /api/budget-collections/:participantId/payments/:paymentId
+DELETE /api/budget-collections/:participantId/payments/:paymentId
+```
+
+Audit actions added:
+
+```text
+collection.recalculated
+collection.expected_updated
+collection.payment_recorded
+collection.payment_updated
+collection.payment_deleted
+```
+
+No new Render/Vercel environment variables are required.

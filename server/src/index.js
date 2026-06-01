@@ -8,6 +8,7 @@ import { readStore, writeStore, sanitizeObject } from './storage.js';
 import {
   buildExpenseReport,
   calculateDashboard,
+  calculateBudgetCollections,
   generateSettlementPlan,
   toCsv,
   validateExpensePayload,
@@ -99,6 +100,7 @@ function buildEventRecord(input = {}) {
     categories: Array.isArray(input.categories) && input.categories.length ? input.categories : defaultCategories(),
     expenses: Array.isArray(input.expenses) ? input.expenses : [],
     settlements: Array.isArray(input.settlements) ? input.settlements : [],
+    budgetCollections: Array.isArray(input.budgetCollections) ? input.budgetCollections : [],
     notifications: Array.isArray(input.notifications) ? input.notifications : [],
     auditLog: Array.isArray(input.auditLog) ? input.auditLog : Array.isArray(input.audit) ? input.audit : []
   };
@@ -245,6 +247,54 @@ function syncSettlements(eventRecord) {
   const plan = generateSettlementPlan(eventRecord);
   eventRecord.settlements = plan.settlements;
   return plan;
+}
+
+function getSuggestedCollectionAmount(eventRecord) {
+  const participants = Array.isArray(eventRecord.participants) ? eventRecord.participants : [];
+  const totalBudget = roundMoney(Number(eventRecord.event?.estimatedBudget || 0));
+  const plannedBudget = roundMoney((eventRecord.categories || []).reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
+  const collectionBasis = totalBudget > 0 ? totalBudget : plannedBudget;
+  return participants.length > 0 ? roundMoney(collectionBasis / participants.length) : 0;
+}
+
+function ensureBudgetCollectionRecords(eventRecord, { forceSuggested = false } = {}) {
+  eventRecord.budgetCollections = Array.isArray(eventRecord.budgetCollections) ? eventRecord.budgetCollections : [];
+  const now = new Date().toISOString();
+  const participantIds = new Set((eventRecord.participants || []).map((participant) => participant.id));
+  const suggestedAmount = getSuggestedCollectionAmount(eventRecord);
+  const existingMap = new Map(eventRecord.budgetCollections.map((item) => [item.participantId, item]));
+
+  eventRecord.budgetCollections = (eventRecord.participants || []).map((participant) => {
+    const existing = existingMap.get(participant.id) || {};
+    const shouldUseSuggested = forceSuggested || !existing.isExpectedCustom;
+    const rawExpectedAmount = Number(existing.expectedAmount);
+    return {
+      id: existing.id || `bc-${participant.id}`,
+      participantId: participant.id,
+      expectedAmount: shouldUseSuggested || !Number.isFinite(rawExpectedAmount) || rawExpectedAmount < 0
+        ? suggestedAmount
+        : roundMoney(rawExpectedAmount),
+      isExpectedCustom: forceSuggested ? false : Boolean(existing.isExpectedCustom),
+      payments: Array.isArray(existing.payments) ? existing.payments : [],
+      createdAt: existing.createdAt || now,
+      updatedAt: now
+    };
+  }).filter((item) => participantIds.has(item.participantId));
+
+  return eventRecord.budgetCollections;
+}
+
+function findBudgetCollectionForParticipant(eventRecord, participantId) {
+  ensureBudgetCollectionRecords(eventRecord);
+  return requireExistingItem(
+    eventRecord.budgetCollections.find((collection) => collection.participantId === participantId),
+    'Budget collection record'
+  );
+}
+
+function buildBudgetCollectionPayload(eventRecord) {
+  ensureBudgetCollectionRecords(eventRecord);
+  return calculateBudgetCollections(eventRecord);
 }
 
 function assertActiveEventEditable(eventRecord) {
@@ -1098,6 +1148,7 @@ function validateRestoreBackupPayload(backup) {
     eventRecord.categories = Array.isArray(eventRecord.categories) ? eventRecord.categories : [];
     eventRecord.expenses = Array.isArray(eventRecord.expenses) ? eventRecord.expenses : [];
     eventRecord.settlements = Array.isArray(eventRecord.settlements) ? eventRecord.settlements : [];
+    eventRecord.budgetCollections = Array.isArray(eventRecord.budgetCollections) ? eventRecord.budgetCollections : [];
     eventRecord.notifications = Array.isArray(eventRecord.notifications) ? eventRecord.notifications : [];
     eventRecord.auditLog = Array.isArray(eventRecord.auditLog) ? eventRecord.auditLog : [];
   }
@@ -2098,6 +2149,157 @@ app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
   res.status(204).send();
 }));
 
+app.get('/api/budget-collections', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  res.json(calculateBudgetCollections(activeEvent));
+}));
+
+app.post('/api/budget-collections/recalculate', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const forceSuggested = Boolean(req.body?.forceSuggested);
+  ensureBudgetCollectionRecords(activeEvent, { forceSuggested });
+  addAuditLog(activeEvent, currentUser, 'collection.recalculated', 'collection', 'Recalculated participant budget collection expectations.', {
+    forceSuggested,
+    suggestedAmount: getSuggestedCollectionAmount(activeEvent),
+    participantCount: activeEvent.participants.length
+  });
+  await writeStore(data);
+  res.json(calculateBudgetCollections(activeEvent));
+}));
+
+app.put('/api/budget-collections/:participantId/expected', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const participant = requireExistingItem(findById(activeEvent.participants, req.params.participantId), 'Participant');
+  const expectedAmount = roundMoney(Number(req.body.expectedAmount));
+  if (!Number.isFinite(expectedAmount) || expectedAmount < 0) {
+    return res.status(400).json({ error: 'Expected collection amount cannot be negative.' });
+  }
+
+  const collection = findBudgetCollectionForParticipant(activeEvent, participant.id);
+  const beforeExpectedAmount = collection.expectedAmount;
+  collection.expectedAmount = expectedAmount;
+  collection.isExpectedCustom = true;
+  collection.updatedAt = new Date().toISOString();
+
+  addAuditLog(activeEvent, currentUser, 'collection.expected_updated', 'collection', `Updated expected collection for ${participant.name}.`, {
+    participantId: participant.id,
+    participantName: participant.name,
+    beforeExpectedAmount,
+    afterExpectedAmount: expectedAmount
+  });
+  await writeStore(data);
+  res.json(calculateBudgetCollections(activeEvent));
+}));
+
+app.post('/api/budget-collections/:participantId/payments', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const participant = requireExistingItem(findById(activeEvent.participants, req.params.participantId), 'Participant');
+  const amount = roundMoney(Number(req.body.amount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Collection payment amount must be greater than zero.' });
+  }
+
+  const payment = {
+    id: `bcp-${nanoid(8)}`,
+    amount,
+    mode: sanitizeObject(req.body).mode || 'UPI',
+    reference: sanitizeObject(req.body).reference || '',
+    paidAt: req.body.paidAt || new Date().toISOString().slice(0, 10),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  const collection = findBudgetCollectionForParticipant(activeEvent, participant.id);
+  collection.payments = Array.isArray(collection.payments) ? collection.payments : [];
+  collection.payments.push(payment);
+  collection.updatedAt = new Date().toISOString();
+
+  addAuditLog(activeEvent, currentUser, 'collection.payment_recorded', 'collection', `Recorded budget collection from ${participant.name}.`, {
+    participantId: participant.id,
+    participantName: participant.name,
+    amount: payment.amount,
+    mode: payment.mode,
+    reference: payment.reference
+  });
+  await writeStore(data);
+  res.status(201).json(calculateBudgetCollections(activeEvent));
+}));
+
+app.put('/api/budget-collections/:participantId/payments/:paymentId', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const participant = requireExistingItem(findById(activeEvent.participants, req.params.participantId), 'Participant');
+  const collection = findBudgetCollectionForParticipant(activeEvent, participant.id);
+  const payment = requireExistingItem((collection.payments || []).find((item) => item.id === req.params.paymentId), 'Collection payment');
+  const amount = roundMoney(Number(req.body.amount ?? payment.amount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Collection payment amount must be greater than zero.' });
+  }
+
+  payment.amount = amount;
+  payment.mode = sanitizeObject(req.body).mode || payment.mode || 'UPI';
+  payment.reference = sanitizeObject(req.body).reference ?? payment.reference ?? '';
+  payment.paidAt = req.body.paidAt || payment.paidAt || new Date().toISOString().slice(0, 10);
+  payment.updatedAt = new Date().toISOString();
+  collection.updatedAt = new Date().toISOString();
+
+  addAuditLog(activeEvent, currentUser, 'collection.payment_updated', 'collection', `Updated budget collection payment for ${participant.name}.`, {
+    participantId: participant.id,
+    participantName: participant.name,
+    paymentId: payment.id,
+    amount: payment.amount,
+    mode: payment.mode,
+    reference: payment.reference
+  });
+  await writeStore(data);
+  res.json(calculateBudgetCollections(activeEvent));
+}));
+
+app.delete('/api/budget-collections/:participantId/payments/:paymentId', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const participant = requireExistingItem(findById(activeEvent.participants, req.params.participantId), 'Participant');
+  const collection = findBudgetCollectionForParticipant(activeEvent, participant.id);
+  const payment = requireExistingItem((collection.payments || []).find((item) => item.id === req.params.paymentId), 'Collection payment');
+  collection.payments = (collection.payments || []).filter((item) => item.id !== req.params.paymentId);
+  collection.updatedAt = new Date().toISOString();
+
+  addAuditLog(activeEvent, currentUser, 'collection.payment_deleted', 'collection', `Deleted budget collection payment for ${participant.name}.`, {
+    participantId: participant.id,
+    participantName: participant.name,
+    paymentId: payment.id,
+    amount: payment.amount
+  });
+  await writeStore(data);
+  res.json(calculateBudgetCollections(activeEvent));
+}));
+
 app.post('/api/receipts/upload', asyncHandler(async (req, res) => {
   const receipt = await uploadReceiptToSupabase({
     fileName: sanitizeObject(req.body).fileName,
@@ -2836,6 +3038,23 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     { label: 'Remaining budget', value: serverMoney(report.totals.remainingBudget, currency), danger: report.totals.isOverBudget }
   ], currency);
 
+  if (report.budgetCollection) {
+    drawPdfSection(doc, 'Budget collection summary');
+    drawKeyValueGrid(doc, [
+      { label: 'Suggested per participant', value: serverMoney(report.budgetCollection.suggestedPerParticipant, currency) },
+      { label: 'Expected collection', value: serverMoney(report.budgetCollection.expectedTotal, currency) },
+      { label: 'Collected so far', value: serverMoney(report.budgetCollection.collectedTotal, currency) },
+      { label: 'Pending collection', value: serverMoney(report.budgetCollection.pendingTotal, currency), danger: Number(report.budgetCollection.pendingTotal || 0) > 0 }
+    ], currency);
+    drawSimpleTable(doc, [
+      { label: 'Participant', key: 'name', weight: 2 },
+      { label: 'Expected', value: (row) => serverMoney(row.expectedAmount, currency), weight: 1 },
+      { label: 'Collected', value: (row) => serverMoney(row.collectedAmount, currency), weight: 1 },
+      { label: 'Pending', value: (row) => serverMoney(row.pendingAmount, currency), weight: 1 },
+      { label: 'Status', value: (row) => pdfStatusLabel(row.status), weight: 1 }
+    ], report.budgetCollection.participants || [], { emptyText: 'No collection records available.' });
+  }
+
   drawPdfSection(doc, 'Category-wise expenses');
   drawSimpleTable(doc, [
     { label: 'Category', key: 'name', weight: 2 },
@@ -2936,13 +3155,21 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
   const activeEvent = getEventRecordForUser(data, currentUser);
   await writeStore(data);
   const report = buildExpenseReport(activeEvent);
-  const rows = report.participantWiseContribution.map((participant) => ({
-    participant: participant.name,
-    paid: participant.amountPaid,
-    owed: participant.amountOwed,
-    netBalance: participant.netBalance,
-    paymentStatus: participant.paymentStatus
-  }));
+  const collectionByParticipant = new Map((report.budgetCollection?.participants || []).map((item) => [item.participantId, item]));
+  const rows = report.participantWiseContribution.map((participant) => {
+    const collection = collectionByParticipant.get(participant.participantId) || {};
+    return {
+      participant: participant.name,
+      paid: participant.amountPaid,
+      owed: participant.amountOwed,
+      netBalance: participant.netBalance,
+      paymentStatus: participant.paymentStatus,
+      budgetCollectionExpected: collection.expectedAmount ?? '',
+      budgetCollectionCollected: collection.collectedAmount ?? '',
+      budgetCollectionPending: collection.pendingAmount ?? '',
+      budgetCollectionStatus: collection.status ?? ''
+    };
+  });
 
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="${activeEvent.event.name.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}-expense-report.csv"`);
