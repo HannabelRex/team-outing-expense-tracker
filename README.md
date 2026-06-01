@@ -350,3 +350,8 @@ The Settlements screen now collects the actual amount paid when marking a settle
 A top-header **Themes** button is now available to all signed-in roles. Users can switch between multiple vibrant palettes, including Signature Blend, Travel Blue + Emerald, Sunset Coral + Indigo, Electric Cyan + Royal Purple, Forest Green + Gold, and Coorg Nature Theme.
 
 Theme selection is stored locally in the user's browser with `localStorage`; it does not change shared app state and does not require backend routes, database changes, or environment variables.
+
+
+### Analytics Theme Colors Hotfix
+
+The Analytics dashboard now follows the active website theme. Chart fills, pie slices, progress bars, axis labels, grid lines, legends, and tooltip styling update when the user switches themes from the top header. This is a frontend-only UI hotfix and does not require backend routes, database changes, or new environment variables.

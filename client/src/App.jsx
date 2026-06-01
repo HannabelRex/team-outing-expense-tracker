@@ -224,6 +224,51 @@ function buildThemeVars(theme) {
   };
 }
 
+function buildChartTheme(theme) {
+  const active = theme || getThemeByKey(DEFAULT_THEME_KEY);
+  return {
+    primary: active.primary,
+    primaryStrong: active.primaryStrong,
+    secondary: active.secondary,
+    accent: active.accent,
+    grid: 'rgba(148, 163, 184, 0.34)',
+    axis: '#475569',
+    tooltipBorder: active.ring || 'rgba(148, 163, 184, 0.32)',
+    tooltipBackground: 'rgba(255, 255, 255, 0.96)',
+    success: '#10B981',
+    warning: '#F59E0B',
+    danger: '#E11D48',
+    muted: '#CBD5E1',
+    palette: [
+      active.primary,
+      active.secondary,
+      active.accent,
+      active.primaryStrong,
+      '#0EA5E9',
+      '#8B5CF6',
+      '#F59E0B',
+      '#E11D48'
+    ]
+  };
+}
+
+const themedAxisProps = (chartTheme) => ({
+  tick: { fill: chartTheme.axis, fontSize: 12 },
+  axisLine: { stroke: chartTheme.grid },
+  tickLine: { stroke: chartTheme.grid }
+});
+
+const themedTooltipProps = (chartTheme) => ({
+  contentStyle: {
+    borderRadius: 16,
+    borderColor: chartTheme.tooltipBorder,
+    background: chartTheme.tooltipBackground,
+    boxShadow: '0 18px 45px rgba(15, 23, 42, 0.12)'
+  },
+  labelStyle: { color: '#0f172a', fontWeight: 800 },
+  itemStyle: { color: '#0f172a' }
+});
+
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -1156,7 +1201,7 @@ function Dashboard({ data }) {
 }
 
 
-function AnalyticsDashboard({ data }) {
+function AnalyticsDashboard({ data, activeTheme }) {
   const analytics = useMemo(() => {
     const currency = data.event?.currency || 'INR';
     const expenses = data.expenses || [];
@@ -1246,6 +1291,10 @@ function AnalyticsDashboard({ data }) {
     topContributor
   } = analytics;
 
+  const chartTheme = useMemo(() => buildChartTheme(activeTheme), [activeTheme]);
+  const axisProps = useMemo(() => themedAxisProps(chartTheme), [chartTheme]);
+  const tooltipProps = useMemo(() => themedTooltipProps(chartTheme), [chartTheme]);
+
   if (data.noAssignedEvent) {
     return (
       <Section title="Analytics" icon={WalletCards}>
@@ -1289,7 +1338,15 @@ function AnalyticsDashboard({ data }) {
             <span className={budgetUsed > 100 ? 'font-black text-rose-700' : 'font-black text-emerald-700'}>{budgetUsed.toFixed(1)}%</span>
           </div>
           <div className="h-4 overflow-hidden rounded-full bg-slate-100">
-            <div className={`h-full rounded-full ${budgetUsed > 100 ? 'bg-rose-500' : 'bg-slate-900'}`} style={{ width: `${Math.min(100, budgetUsed)}%` }} />
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.min(100, budgetUsed)}%`,
+                background: budgetUsed > 100
+                  ? `linear-gradient(135deg, ${chartTheme.danger} 0%, ${chartTheme.warning} 100%)`
+                  : `linear-gradient(135deg, ${chartTheme.primary} 0%, ${chartTheme.secondary} 100%)`
+              }}
+            />
           </div>
           <div className="grid gap-3 text-sm md:grid-cols-4">
             <div className="rounded-2xl bg-slate-50 p-4"><p className="text-slate-500">Budget</p><p className="font-black text-slate-950">{money(budget, currency)}</p></div>
@@ -1306,13 +1363,13 @@ function AnalyticsDashboard({ data }) {
             {categoryChartData.length === 0 ? <EmptyState title="No category data" body="Add budget categories and expenses to see category analytics." /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={categoryChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value) => money(value, currency)} />
-                  <Legend />
-                  <Bar dataKey="Estimated" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="Actual" radius={[8, 8, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="name" {...axisProps} />
+                  <YAxis {...axisProps} />
+                  <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
+                  <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
+                  <Bar dataKey="Estimated" radius={[8, 8, 0, 0]} fill={chartTheme.primary} />
+                  <Bar dataKey="Actual" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -1325,10 +1382,10 @@ function AnalyticsDashboard({ data }) {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie data={categoryPieData} dataKey="value" nameKey="name" outerRadius={105} label>
-                    {categoryPieData.map((entry) => <Cell key={entry.name} />)}
+                    {categoryPieData.map((entry, index) => <Cell key={entry.name} fill={chartTheme.palette[index % chartTheme.palette.length]} />)}
                   </Pie>
-                  <Tooltip formatter={(value) => money(value, currency)} />
-                  <Legend />
+                  <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
+                  <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
                 </PieChart>
               </ResponsiveContainer>
             )}
@@ -1342,13 +1399,13 @@ function AnalyticsDashboard({ data }) {
             {participantContributionData.length === 0 ? <EmptyState title="No participant contribution" body="Add participants and expenses to see who paid what." /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={participantContributionData} layout="vertical" margin={{ left: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" />
-                  <YAxis dataKey="name" type="category" width={110} />
-                  <Tooltip formatter={(value) => money(value, currency)} />
-                  <Legend />
-                  <Bar dataKey="Paid" radius={[0, 8, 8, 0]} />
-                  <Bar dataKey="Owed" radius={[0, 8, 8, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis type="number" {...axisProps} />
+                  <YAxis dataKey="name" type="category" width={110} {...axisProps} />
+                  <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
+                  <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
+                  <Bar dataKey="Paid" radius={[0, 8, 8, 0]} fill={chartTheme.primary} />
+                  <Bar dataKey="Owed" radius={[0, 8, 8, 0]} fill={chartTheme.accent} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -1360,13 +1417,13 @@ function AnalyticsDashboard({ data }) {
             {statusChartData.length === 0 ? <EmptyState title="No expense status data" body="Expense approval analytics will show here after expenses are submitted." /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={statusChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip formatter={(value, name) => (name === 'Amount' ? money(value, currency) : value)} />
-                  <Legend />
-                  <Bar dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="count" name="Count" radius={[8, 8, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="name" {...axisProps} />
+                  <YAxis {...axisProps} />
+                  <Tooltip formatter={(value, name) => (name === 'Amount' ? money(value, currency) : value)} {...tooltipProps} />
+                  <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
+                  <Bar dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} />
+                  <Bar dataKey="count" name="Count" radius={[8, 8, 0, 0]} fill={chartTheme.primaryStrong} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -4019,7 +4076,7 @@ function AppShell() {
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
-        {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} />}
+        {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
         {activeTab === 'audit' && canViewAudit && <AuditTrail data={data} setToast={setToast} />}
         {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
