@@ -2290,8 +2290,10 @@ app.patch('/api/settlements/:id', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Paid amount must be between zero and settlement amount.' });
   }
 
+  const nextStatus = paidAmount === 0 ? 'pending' : paidAmount >= settlement.amount ? 'completed' : 'partially-paid';
+
   settlement.paidAmount = paidAmount;
-  settlement.status = req.body.status || (paidAmount === 0 ? 'pending' : paidAmount >= settlement.amount ? 'completed' : 'partially-paid');
+  settlement.status = nextStatus;
   settlement.transactionReference = req.body.transactionReference ?? settlement.transactionReference;
   settlement.paymentProofUrl = req.body.paymentProofUrl ?? settlement.paymentProofUrl;
   settlement.updatedAt = new Date().toISOString();
@@ -2301,10 +2303,11 @@ app.patch('/api/settlements/:id', asyncHandler(async (req, res) => {
     isSettledLocked: activeEvent.settlements.some((item) => item.status === 'completed')
   }));
 
-  addAuditLog(activeEvent, currentUser, 'settlement.updated', 'settlement', `Updated settlement from ${settlement.fromParticipantName} to ${settlement.toParticipantName}.`, {
+  addAuditLog(activeEvent, currentUser, 'settlement.updated', 'settlement', `Updated settlement from ${settlement.fromName} to ${settlement.toName}.`, {
     settlementId: settlement.id,
     amount: settlement.amount,
     paidAmount: settlement.paidAmount,
+    remainingAmount: roundMoney(settlement.amount - settlement.paidAmount),
     status: settlement.status,
     transactionReference: settlement.transactionReference || ''
   });

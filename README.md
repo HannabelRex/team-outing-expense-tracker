@@ -337,3 +337,10 @@ Both Render and Vercel may redeploy because Phase 16 changes backend and fronten
 ### Invite signup existing-account hotfix
 
 Invite-based signup is now invite-aware. When a user opens an invitation link and creates an account with the invited email, the app sends the invite token during the email-existence check. Pending invitation placeholder users no longer block first-time invited users from signing up. If the email is already linked to a real Supabase Auth login, the user is still redirected to sign in and accept the invite safely.
+
+
+
+## Settlement Partial Payment Tracking Hotfix
+
+The Settlements screen now collects the actual amount paid when marking a settlement as partially paid. Admin/Finance users can enter the partial paid amount and an optional transaction/reference note. Settlement cards now show total, paid, and remaining amounts, and backend status is derived from the paid amount to avoid inconsistent partial/full settlement state.
+

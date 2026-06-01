@@ -2188,19 +2188,54 @@ function Expenses({ data, reload, setToast, isOnline }) {
 function Settlements({ data, reload, setToast }) {
   const currency = data.event.currency;
   const settlements = data.settlementPlan.settlements;
+  const [partialEditor, setPartialEditor] = useState(null);
 
-  async function markSettlement(settlement, status) {
-    const paidAmount = status === 'completed' ? settlement.amount : status === 'pending' ? 0 : settlement.paidAmount || settlement.amount / 2;
+  function openPartialEditor(settlement) {
+    const existingPaidAmount = Number(settlement.paidAmount || 0);
+    setPartialEditor({
+      settlementId: settlement.id,
+      paidAmount: existingPaidAmount > 0 ? String(existingPaidAmount) : '',
+      transactionReference: settlement.transactionReference || ''
+    });
+  }
+
+  async function savePartialPayment(settlement) {
+    const paidAmount = Number(partialEditor?.paidAmount || 0);
+    if (!Number.isFinite(paidAmount) || paidAmount <= 0) {
+      setToast('Enter a partial paid amount greater than zero. Yes, the number part is unfortunately required.');
+      return;
+    }
+
+    if (paidAmount >= Number(settlement.amount || 0)) {
+      setToast('Partial payment must be less than the settlement amount. Use Complete for full payment.');
+      return;
+    }
+
     await api(`/settlements/${settlement.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        status,
         paidAmount,
-        transactionReference: status === 'completed' ? `TXN-${Date.now()}` : settlement.transactionReference,
-        paymentProofUrl: status === 'completed' ? 'proof-placeholder://uploaded-payment-proof' : settlement.paymentProofUrl
+        transactionReference: partialEditor.transactionReference || settlement.transactionReference || '',
+        paymentProofUrl: settlement.paymentProofUrl || ''
       })
     });
-    setToast('Settlement updated. Money has moved, or at least we claim it has.');
+    setPartialEditor(null);
+    setToast('Partial settlement payment saved. The money trail is slightly less mysterious now.');
+    reload();
+  }
+
+  async function markSettlement(settlement, status) {
+    const paidAmount = status === 'completed' ? settlement.amount : 0;
+    await api(`/settlements/${settlement.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        paidAmount,
+        transactionReference: status === 'completed' ? (settlement.transactionReference || `TXN-${Date.now()}`) : '',
+        paymentProofUrl: status === 'completed' ? (settlement.paymentProofUrl || 'proof-placeholder://uploaded-payment-proof') : ''
+      })
+    });
+    setPartialEditor(null);
+    setToast(status === 'completed' ? 'Settlement marked complete.' : 'Settlement reset to pending.');
     reload();
   }
 
@@ -2210,22 +2245,65 @@ function Settlements({ data, reload, setToast }) {
         <EmptyState title="No settlements needed" body="Balances are already clean. Suspiciously peaceful." />
       ) : (
         <div className="space-y-4">
-          {settlements.map((settlement) => (
-            <div key={settlement.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-slate-500">{settlement.fromName} pays {settlement.toName}</p>
-                  <p className="text-2xl font-black text-slate-950">{money(settlement.amount, currency)}</p>
-                  {settlement.transactionReference && <p className="text-xs text-slate-500">Ref: {settlement.transactionReference}</p>}
+          {settlements.map((settlement) => {
+            const paidAmount = Number(settlement.paidAmount || 0);
+            const remainingAmount = Math.max(0, Number(settlement.amount || 0) - paidAmount);
+            const isEditingPartial = partialEditor?.settlementId === settlement.id;
+
+            return (
+              <div key={settlement.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-slate-500">{settlement.fromName} pays {settlement.toName}</p>
+                    <p className="text-2xl font-black text-slate-950">{money(settlement.amount, currency)}</p>
+                    <div className="mt-2 grid gap-1 text-xs text-slate-500 sm:grid-cols-2 lg:grid-cols-3">
+                      <span>Paid: <strong className="text-slate-800">{money(paidAmount, currency)}</strong></span>
+                      <span>Remaining: <strong className={remainingAmount > 0 ? 'text-amber-700' : 'text-emerald-700'}>{money(remainingAmount, currency)}</strong></span>
+                      {settlement.transactionReference && <span>Ref: <strong className="text-slate-800">{settlement.transactionReference}</strong></span>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={statusBadge(settlement.status)}>{settlement.status}</span>
+                    <button className="btn-ghost" onClick={() => openPartialEditor(settlement)} type="button">Partially paid</button>
+                    {paidAmount > 0 && <button className="btn-ghost" onClick={() => markSettlement(settlement, 'pending')} type="button">Reset</button>}
+                    <button className="btn-primary" onClick={() => markSettlement(settlement, 'completed')} type="button">Complete</button>
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={statusBadge(settlement.status)}>{settlement.status}</span>
-                  <button className="btn-ghost" onClick={() => markSettlement(settlement, 'partially-paid')} type="button">Partially paid</button>
-                  <button className="btn-primary" onClick={() => markSettlement(settlement, 'completed')} type="button">Complete</button>
-                </div>
+
+                {isEditingPartial && (
+                  <div className="mt-4 rounded-2xl border border-blue-100 bg-white p-4">
+                    <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                      <label className="field-label">Paid amount
+                        <input
+                          className="input"
+                          type="number"
+                          min="0.01"
+                          max={Math.max(0, Number(settlement.amount || 0) - 0.01)}
+                          step="0.01"
+                          value={partialEditor.paidAmount}
+                          onChange={(event) => setPartialEditor({ ...partialEditor, paidAmount: event.target.value })}
+                          placeholder={`Less than ${money(settlement.amount, currency)}`}
+                        />
+                      </label>
+                      <label className="field-label">Reference / note
+                        <input
+                          className="input"
+                          value={partialEditor.transactionReference}
+                          onChange={(event) => setPartialEditor({ ...partialEditor, transactionReference: event.target.value })}
+                          placeholder="UPI ref, cash note, bank ref..."
+                        />
+                      </label>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <button className="btn-primary" onClick={() => savePartialPayment(settlement)} type="button">Save partial</button>
+                        <button className="btn-ghost" onClick={() => setPartialEditor(null)} type="button">Cancel</button>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500">Partial payments are tracked separately from the full settlement amount, because guessing payment amounts is apparently not a finance feature.</p>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
           {data.settlementPlan.allSettled && (
             <div className="rounded-3xl bg-emerald-50 p-4 font-bold text-emerald-800 ring-1 ring-emerald-200">All settled. A miracle with receipts.</div>
           )}
