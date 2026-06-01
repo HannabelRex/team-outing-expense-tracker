@@ -1,8 +1,19 @@
-const CACHE_NAME = 'team-outing-expense-tracker-v3';
-const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE_NAME = 'team-outing-expense-tracker-v4';
+const APP_SHELL = [
+  '/',
+  '/index.html',
+  '/offline.html',
+  '/manifest.webmanifest',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png'
+];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch((error) => {
+      console.warn('App shell cache failed:', error);
+    })
+  );
   self.skipWaiting();
 });
 
@@ -13,7 +24,33 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response && response.ok && response.type === 'basic') {
+    const cache = await caches.open(CACHE_NAME);
+    cache.put(request, response.clone());
+  }
+  return response;
+}
+
+async function networkFirstNavigation(request) {
+  try {
+    const response = await fetch(request);
+    if (response && response.ok && response.type === 'basic') {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put('/', response.clone());
+    }
+    return response;
+  } catch {
+    return (await caches.match('/')) || (await caches.match('/offline.html')) || Response.error();
+  }
+}
+
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
   const requestUrl = new URL(event.request.url);
 
   if (requestUrl.pathname.startsWith('/api/')) {
@@ -22,9 +59,11 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (event.request.mode === 'navigate') {
-    event.respondWith(fetch(event.request).catch(() => caches.match('/')));
+    event.respondWith(networkFirstNavigation(event.request));
     return;
   }
 
-  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+  if (requestUrl.origin === self.location.origin) {
+    event.respondWith(cacheFirst(event.request));
+  }
 });

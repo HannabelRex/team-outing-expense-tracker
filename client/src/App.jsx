@@ -24,6 +24,8 @@ import {
   Users,
   WalletCards,
   Smartphone,
+  Wifi,
+  WifiOff,
   X
 } from 'lucide-react';
 import {
@@ -47,6 +49,8 @@ const SESSION_STORAGE_KEY = 'team-outing-session-v1';
 const SESSION_LAST_ACTIVITY_KEY = 'team-outing-last-activity-v1';
 const SESSION_TIMEOUT_MINUTES = Math.max(1, Number(import.meta.env.VITE_SESSION_TIMEOUT_MINUTES || 30));
 const SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MINUTES * 60 * 1000;
+const BOOTSTRAP_CACHE_KEY = 'team-outing-bootstrap-cache-v1';
+const LAST_SYNCED_AT_KEY = 'team-outing-last-synced-at-v1';
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -200,6 +204,61 @@ class AppErrorBoundary extends Component {
 }
 
 
+function browserIsOnline() {
+  return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+}
+
+function readCachedBootstrap() {
+  try {
+    const raw = window.localStorage.getItem(BOOTSTRAP_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedBootstrap(data) {
+  try {
+    window.localStorage.setItem(BOOTSTRAP_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // Cached data is helpful, not mission critical. The browser may refuse storage in private mode.
+  }
+}
+
+function readLastSyncedAt() {
+  try {
+    const raw = window.localStorage.getItem(LAST_SYNCED_AT_KEY);
+    return raw ? Number(raw) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function saveLastSyncedAt(value = Date.now()) {
+  try {
+    window.localStorage.setItem(LAST_SYNCED_AT_KEY, String(value));
+  } catch {
+    // Same browser storage caveat. Tiny local cache, tiny local drama.
+  }
+  return value;
+}
+
+function formatSyncTime(value) {
+  if (!value) return 'Not synced yet';
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return 'Unknown';
+  }
+}
+
+function isWriteRequest(options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  return !['GET', 'HEAD'].includes(method);
+}
+
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -283,6 +342,10 @@ async function refreshSavedSessionToken() {
 }
 
 async function api(path, options = {}) {
+  if (!browserIsOnline() && isWriteRequest(options)) {
+    throw new Error('You are offline. This action needs the server, so it is blocked until the connection returns. Annoying, but safer than inventing fake saves.');
+  }
+
   if (apiAccessToken && isSessionTimedOut()) {
     saveSession(null);
     setApiAccessToken('');
@@ -321,6 +384,10 @@ async function api(path, options = {}) {
 
 
 async function downloadApiFile(path, fileName) {
+  if (!browserIsOnline()) {
+    throw new Error('You are offline. Downloads need the backend, because files do not teleport, sadly.');
+  }
+
   if (apiAccessToken && isSessionTimedOut()) {
     saveSession(null);
     setApiAccessToken('');
@@ -2450,6 +2517,34 @@ function AuditTrail({ data, setToast }) {
   );
 }
 
+
+function OfflineStatusBanner({ isOnline, lastSyncedAt, offlineNotice }) {
+  const icon = isOnline ? <Wifi size={18} /> : <WifiOff size={18} />;
+  const title = isOnline ? 'Online' : 'Offline mode';
+  const body = isOnline
+    ? 'Connected. Latest outing data can sync normally.'
+    : 'You are offline. The app is showing the last synced data when available. New saves, uploads, invites, approvals, and downloads are blocked until the connection returns.';
+
+  if (isOnline && !offlineNotice && !lastSyncedAt) return null;
+
+  return (
+    <div className={`border-b ${isOnline ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm sm:px-6 lg:px-8">
+        <div className="flex items-start gap-3">
+          <div className={`mt-0.5 rounded-full p-2 ${isOnline ? 'bg-emerald-100' : 'bg-amber-100'}`}>{icon}</div>
+          <div>
+            <p className="font-black">{title}</p>
+            <p className="leading-5">{offlineNotice || body}</p>
+          </div>
+        </div>
+        <div className="rounded-full bg-white/70 px-3 py-1 text-xs font-bold ring-1 ring-black/5">
+          Last synced: {formatSyncTime(lastSyncedAt)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppShell() {
   const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -2461,6 +2556,9 @@ function AppShell() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState([]);
   const [inboxLoading, setInboxLoading] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => browserIsOnline());
+  const [lastSyncedAt, setLastSyncedAt] = useState(() => readLastSyncedAt());
+  const [offlineNotice, setOfflineNotice] = useState('');
 
   function handleSession(nextSession) {
     const hasToken = Boolean(nextSession?.access_token);
@@ -2501,13 +2599,38 @@ function AppShell() {
   }
 
   async function reload() {
+    const cachedBootstrap = readCachedBootstrap();
+
+    if (!browserIsOnline()) {
+      setIsOnline(false);
+      if (cachedBootstrap) {
+        setData(cachedBootstrap);
+        setError('');
+        setOfflineNotice('You are offline. Showing the last synced outing data from this device.');
+      } else {
+        setError('You are offline and this device does not have saved outing data yet. Connect once to load the app.');
+      }
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const bootstrap = await api('/bootstrap');
       setData(bootstrap);
+      saveCachedBootstrap(bootstrap);
+      const syncedAt = saveLastSyncedAt();
+      setLastSyncedAt(syncedAt);
+      setOfflineNotice('');
       setError('');
     } catch (err) {
-      setError(err.message);
+      if (cachedBootstrap) {
+        setData(cachedBootstrap);
+        setError('');
+        setOfflineNotice(`Could not refresh from the server. Showing last synced data instead. ${err.message}`);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -2527,6 +2650,10 @@ function AppShell() {
 
   async function loadNotificationInbox() {
     if (!session?.access_token || !data) return;
+    if (!browserIsOnline()) {
+      setOfflineNotice('You are offline. Inbox refresh is paused until the connection returns.');
+      return;
+    }
     try {
       setInboxLoading(true);
       const rows = await api('/notification-inbox');
@@ -2556,6 +2683,29 @@ function AppShell() {
       showActionError(setToast, err);
     }
   }
+
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setOfflineNotice('Connection restored. Refreshing the latest outing data.');
+      if (session?.access_token) {
+        reload();
+      }
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      setOfflineNotice('You are offline. Showing the last synced outing data when available.');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [session?.access_token]);
 
   useEffect(() => {
     setApiAccessToken(session?.access_token || '');
@@ -2716,11 +2866,16 @@ function AppShell() {
                   className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950"
                   value={data.activeEventId || ''}
                   onChange={(e) => switchEvent(e.target.value)}
+                  disabled={!isOnline}
+                  title={!isOnline ? 'Event switching needs a live server connection.' : undefined}
                   aria-label="Switch outing event"
                 >
                   {data.eventList.map((eventItem) => <option key={eventItem.id} value={eventItem.id}>{eventItem.name}</option>)}
                 </select>
               )}
+              <div className={`rounded-2xl px-4 py-2 text-sm font-bold ring-1 ${isOnline ? 'bg-emerald-400/15 text-emerald-100 ring-emerald-300/30' : 'bg-amber-400/15 text-amber-100 ring-amber-300/30'}`}>
+                {isOnline ? <Wifi className="inline" size={16} /> : <WifiOff className="inline" size={16} />} {isOnline ? 'Online' : 'Offline'}
+              </div>
               {data.currentUser && (
                 <div className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/20">
                   {data.currentUser.name || data.currentUser.email} · {data.currentUser.role}
@@ -2744,6 +2899,8 @@ function AppShell() {
           </div>
         </div>
       </header>
+
+      <OfflineStatusBanner isOnline={isOnline} lastSyncedAt={lastSyncedAt} offlineNotice={offlineNotice} />
 
       <nav className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-3 sm:px-6 lg:px-8">
@@ -2785,7 +2942,7 @@ function AppShell() {
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
-        Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
+        Mobile PWA mode · {isOnline ? 'Online sync ready' : 'Offline cached view'} · Last synced: {formatSyncTime(lastSyncedAt)} · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>
   );

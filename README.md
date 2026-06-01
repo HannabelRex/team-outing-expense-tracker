@@ -1,38 +1,39 @@
-# Team Outing Expense Tracker - Phase 11 Analytics Dashboard
+# Team Outing Expense Tracker - Phase 12 Offline PWA Mode
 
-This package upgrades the Team Outing Expense Tracker with a new Admin/Finance Analytics tab.
+This package upgrades the Team Outing Expense Tracker with safe offline PWA behavior and sync visibility.
 
-## Phase 11 summary
+## Phase 12 summary
 
-The app now includes a dedicated Analytics dashboard that turns existing outing data into useful visual insight.
+The app now detects online/offline status, keeps a cached copy of the latest `/api/bootstrap` outing data in the browser, and blocks write actions while offline so users do not accidentally believe unsaved changes were stored.
 
 Key additions:
 
-- Analytics tab for Admin and Finance users
-- Member users do not see the Analytics tab
-- Submitted, approved, pending, and rejected spend summary
-- Budget utilization percentage and progress bar
-- Top category and top contributor cards
-- Receipt coverage percentage
-- Budget versus actual category chart
-- Category spend share chart
-- Participant paid versus owed chart
-- Expense approval mix chart
-- Event comparison table across visible events
+- Online/offline status chip in the app header
+- Offline/sync banner with last synced timestamp
+- Cached last successful bootstrap data in localStorage
+- Offline fallback loading from cached outing data
+- Write API calls blocked while offline with a clear user message
+- Report downloads blocked while offline with a clear message
+- Inbox refresh paused while offline
+- Event switching disabled while offline
+- Service worker cache upgraded to v4
+- Offline fallback page added at `/offline.html`
+- Runtime caching for same-origin static assets
 
 ## Files changed
 
 ```text
 client/src/App.jsx
+client/public/service-worker.js
+client/public/offline.html
+client/public/manifest.webmanifest
 README.md
-docs/phase11-analytics-dashboard.md
+docs/phase12-offline-pwa.md
 ```
 
 ## Backend changes
 
-No backend changes are required for this phase.
-
-The Analytics tab uses existing data from `/api/bootstrap`, including current event details, dashboard calculations, expenses, category spending, participant balances, and visible event summaries.
+No backend route, database, or Render environment variable changes are required for this phase.
 
 ## Deploy steps
 
@@ -43,18 +44,29 @@ git status
 
 git add -A
 
-git commit -m "Add analytics dashboard"
+git commit -m "Add offline PWA mode"
 
 git push origin main
 ```
 
-Vercel should redeploy the frontend automatically after the push. Render does not need a backend environment change for Phase 11.
+Vercel should redeploy the frontend automatically after the push. Render does not need a backend configuration change for Phase 12.
 
 ## Testing checklist
 
-1. Sign in as Admin and confirm the Analytics tab is visible.
-2. Sign in as Finance and confirm the Analytics tab is visible while Roles remains hidden.
-3. Sign in as Member and confirm the Analytics tab is hidden.
-4. Compare Analytics totals against Dashboard and Reports.
-5. Confirm charts render on desktop and mobile.
-6. Confirm event comparison table shows visible events.
+1. Sign in while online and let the dashboard load once.
+2. Confirm the header shows Online and the banner/footer show Last synced.
+3. Open browser DevTools, set Network to Offline, or disconnect internet.
+4. Refresh the app and confirm cached outing data still appears.
+5. Try a write action, such as creating an expense or switching event, and confirm it is blocked with an offline message.
+6. Confirm report download is blocked while offline.
+7. Restore internet and confirm the app refreshes data and returns to Online.
+8. In Chrome Application tab, verify service worker version `team-outing-expense-tracker-v4` is active after reload.
+
+## PWA cache reset if old behavior appears
+
+1. Open Chrome DevTools.
+2. Go to Application.
+3. Service Workers -> Unregister.
+4. Storage -> Clear site data.
+5. Close and reopen the app.
+6. Hard refresh with Ctrl + Shift + R.
