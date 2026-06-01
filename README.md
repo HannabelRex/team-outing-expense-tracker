@@ -44,3 +44,16 @@ git push
 ```
 
 Vercel should redeploy automatically. Render does not need redeploy because this is frontend-only.
+
+## Phase 9: Email Invitation Delivery
+
+The invitation workflow now sends invite links by email using the configured SMTP sender. Admins can see delivery status, resend pending invite emails, and still copy invite links manually as a fallback.
+
+Key additions:
+
+- Invite email delivery on invite creation
+- Email status tracking for invites
+- Resend email action for pending invites
+- Audit entries for sent/failed/resend email actions
+
+

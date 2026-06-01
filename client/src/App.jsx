@@ -605,6 +605,31 @@ function statusBadge(status) {
   return `inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles[status] || 'bg-slate-100 text-slate-700 ring-slate-200'}`;
 }
 
+function inviteEmailStatusLabel(status) {
+  const labels = {
+    sent: 'Email sent',
+    failed: 'Email failed',
+    pending: 'Email pending',
+    'not-configured': 'SMTP missing',
+    'not-requested': 'Not needed'
+  };
+  return labels[status] || 'Not recorded';
+}
+
+function inviteEmailBadgeStatus(status) {
+  if (status === 'sent') return 'approved';
+  if (status === 'failed' || status === 'not-configured') return 'rejected';
+  if (status === 'pending') return 'pending';
+  return 'not-attending';
+}
+
+function compactDateTime(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString();
+}
+
 function Section({ title, icon: Icon, children, action }) {
   return (
     <section className="rounded-3xl bg-white p-5 shadow-soft ring-1 ring-slate-100">
@@ -1856,7 +1881,9 @@ function InvitationsManager({ data, reload, setToast }) {
       });
       setToast(invite.status === 'accepted'
         ? 'Existing user assigned to the event.'
-        : 'Invite created and participant tagged. Copy the invite link and send it manually for now.');
+        : invite.emailStatus === 'sent'
+          ? 'Invite created, participant tagged, and email sent successfully.'
+          : `Invite created and participant tagged, but email status is ${inviteEmailStatusLabel(invite.emailStatus).toLowerCase()}. Copy link is available as a fallback.`);
       setForm({ name: '', email: '', role: 'member', eventId: form.eventId });
       await reload();
     } catch (err) {
@@ -1887,14 +1914,29 @@ function InvitationsManager({ data, reload, setToast }) {
     }
     await navigator.clipboard.writeText(invite.inviteUrl);
     setCopiedId(invite.id);
-    setToast('Invite link copied. Paste it into chat/email and pretend SMTP works.');
+    setToast('Invite link copied. You can share it manually if needed.');
     window.setTimeout(() => setCopiedId(''), 1800);
+  }
+
+  async function resendInviteEmail(invite) {
+    setBusy(true);
+    try {
+      const updatedInvite = await api(`/invitations/${invite.id}/resend-email`, { method: 'POST' });
+      setToast(updatedInvite.emailStatus === 'sent'
+        ? `Invite email sent to ${updatedInvite.email}.`
+        : `Invite email could not be sent: ${updatedInvite.emailError || inviteEmailStatusLabel(updatedInvite.emailStatus)}.`);
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <Section title="User invitations and event assignment" icon={Users}>
       <div className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-100">
-        Invite users, assign their role, and tag them to an outing in one step. The participant is auto-created for the selected event, because manually matching emails forever is how bugs hatch.
+        Invite users, assign their role, tag them to an outing, and send the invite link by email in one step. Manual copy is still available as a fallback.
       </div>
       <form className="grid gap-3 rounded-3xl bg-white p-4 ring-1 ring-slate-100 md:grid-cols-5" onSubmit={createInvite}>
         <label className="field-label md:col-span-1">Name
@@ -1916,7 +1958,7 @@ function InvitationsManager({ data, reload, setToast }) {
           </select>
         </label>
         <div className="flex items-end">
-          <button className="btn-primary w-full justify-center" type="submit" disabled={busy || events.length === 0}>{busy ? 'Creating...' : 'Create invite'}</button>
+          <button className="btn-primary w-full justify-center" type="submit" disabled={busy || events.length === 0}>{busy ? 'Creating...' : 'Create & email invite'}</button>
         </div>
       </form>
 
@@ -1929,13 +1971,14 @@ function InvitationsManager({ data, reload, setToast }) {
               <th className="p-3">Role</th>
               <th className="p-3">Event</th>
               <th className="p-3">Status</th>
+              <th className="p-3">Email delivery</th>
               <th className="p-3">Invite link</th>
               <th className="p-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {invitations.length === 0 ? (
-              <tr><td className="p-3 text-slate-500" colSpan="7">No invites yet.</td></tr>
+              <tr><td className="p-3 text-slate-500" colSpan="8">No invites yet.</td></tr>
             ) : invitations.map((invite) => (
               <tr key={invite.id} className="border-t border-slate-100">
                 <td className="p-3 font-semibold text-slate-800">{invite.email}</td>
@@ -1943,10 +1986,19 @@ function InvitationsManager({ data, reload, setToast }) {
                 <td className="p-3"><span className={statusBadge(invite.role)}>{invite.role}</span></td>
                 <td className="p-3 text-slate-600">{invite.eventName || '-'}</td>
                 <td className="p-3"><span className={statusBadge(invite.status === 'accepted' ? 'approved' : invite.status === 'revoked' ? 'rejected' : 'pending')}>{invite.status}</span></td>
+                <td className="p-3">
+                  <span className={statusBadge(inviteEmailBadgeStatus(invite.emailStatus))}>{inviteEmailStatusLabel(invite.emailStatus)}</span>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {invite.emailAttempts ? `${invite.emailAttempts} attempt${invite.emailAttempts === 1 ? '' : 's'}` : 'No attempts'}
+                    {invite.emailLastAttemptAt ? ` · ${compactDateTime(invite.emailLastAttemptAt)}` : ''}
+                  </div>
+                  {invite.emailError && <div className="mt-1 max-w-xs truncate text-xs text-rose-600" title={invite.emailError}>{invite.emailError}</div>}
+                </td>
                 <td className="p-3 max-w-xs truncate text-slate-500">{invite.inviteUrl || '-'}</td>
                 <td className="p-3">
                   <div className="flex flex-wrap gap-2">
                     {invite.inviteUrl && invite.status === 'pending' && <button className="btn-ghost" type="button" onClick={() => copyInvite(invite)}>{copiedId === invite.id ? 'Copied' : 'Copy link'}</button>}
+                    {invite.status === 'pending' && <button className="btn-ghost" type="button" disabled={busy} onClick={() => resendInviteEmail(invite)}>Resend email</button>}
                     {invite.status === 'pending' && <button className="btn-ghost text-rose-700" type="button" disabled={busy} onClick={() => revokeInvite(invite)}>Revoke</button>}
                   </div>
                 </td>
