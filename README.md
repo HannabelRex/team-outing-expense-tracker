@@ -476,3 +476,15 @@ The glassmorphism login screen now keeps animated flyer cards in safer edge posi
 ## Login Mobile-First Layout Hotfix
 
 The login screen now prioritizes the sign-in card on mobile and places the login panel on the left side on larger screens. This avoids forcing mobile users to scroll past the product showcase before they can sign in. The animated glassmorphism background and SaaS preview remain available without blocking the login form.
+
+## Login Workspace Access Redesign Hotfix
+
+The login screen was redesigned for clearer wording and better mobile usability.
+
+- Mobile users now see the login form first without scrolling through the showcase.
+- Desktop users see the login form on the left and a clean product explanation panel on the right.
+- Login/signup/invite/reset messaging is now direct and workspace-focused.
+- Small-screen showcase content is hidden to keep sign-in fast and focused.
+- Existing auth flows remain unchanged.
+
+See `docs/login-workspace-access-redesign-hotfix.md` for details.

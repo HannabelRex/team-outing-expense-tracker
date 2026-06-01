@@ -958,17 +958,17 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
     }
   }
 
-  const title = mode === 'signup' ? 'Create account' : mode === 'forgot' ? 'Reset password' : mode === 'reset' ? 'Set new password' : 'Sign in';
+  const title = mode === 'signup' ? 'Create your account' : mode === 'forgot' ? 'Reset your password' : mode === 'reset' ? 'Set a new password' : 'Sign in';
   const modeDescription = mode === 'signup'
-    ? 'Create your secure account and join the outing workspace.'
+    ? 'Use the email invited by your team admin. Your access will be linked to the outing after signup.'
     : mode === 'forgot'
-      ? 'Enter your email and we will send a reset link.'
+      ? 'Enter your registered email. We will send a secure password reset link.'
       : mode === 'reset'
-        ? 'Set a new password for your account.'
-        : 'Welcome back. Sign in to manage your outing expenses.';
+        ? 'Choose a new password for your Team Outing Expense Tracker account.'
+        : 'Use your registered email and password to continue to your outing workspace.';
   const inviteNotice = inviteContext.token
-    ? 'Invite detected. Use the invited email to link your event access securely.'
-    : 'Built for budgets, receipts, collections, settlements, and reports.';
+    ? 'You are joining an invited outing. Use the invited email below to create your account or sign in.'
+    : 'Track budgets, receipts, collections, approvals, settlements, and reports in one place.';
   return (
     <main className="auth-shell relative min-h-screen overflow-hidden px-4 py-8 text-slate-950 sm:px-6 lg:px-10">
       <div className="auth-aurora auth-aurora-one" />
@@ -976,84 +976,19 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
       <div className="auth-aurora auth-aurora-three" />
       <div className="auth-grid-overlay" />
 
-      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-7xl items-center gap-8 lg:grid-cols-[0.88fr_1.12fr]">
-        <section className="auth-showcase order-2 relative overflow-hidden rounded-[2rem] border border-white/35 bg-white/12 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8 lg:min-h-[680px] lg:p-10">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.32),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.22),transparent_36%)]" />
-          <div className="auth-route-line" />
-          <div className="relative z-10 flex h-full flex-col justify-between gap-8">
-            <div className="auth-showcase-copy">
-              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-4 py-2 text-xs font-black uppercase tracking-[0.25em] text-white/85 shadow-lg backdrop-blur-md">
-                <MapPin size={15} /> Team outing control room
-              </div>
-              <h1 className="max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">
-                Plan the trip. Track the spend. Settle without spreadsheet drama.
-              </h1>
-              <p className="mt-5 max-w-2xl text-base font-semibold leading-8 text-white/78 sm:text-lg">
-                Budgets, receipts, approvals, collections, settlements, analytics, email invites, offline drafts, and daily backups in one polished workspace.
-              </p>
-            </div>
-
-            <div className="auth-dashboard-card rounded-[2rem] border border-white/25 bg-slate-950/38 p-5 shadow-2xl backdrop-blur-xl">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/80">Live outing snapshot</p>
-                  <h2 className="mt-1 text-2xl font-black text-white">Coorg team offsite</h2>
-                </div>
-                <div className="rounded-2xl bg-emerald-400/18 px-3 py-2 text-xs font-black text-emerald-100 ring-1 ring-emerald-200/30">
-                  Synced
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
-                  <p className="text-xs font-bold text-white/60">Collected</p>
-                  <p className="mt-2 text-2xl font-black">72%</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[72%] rounded-full bg-emerald-300" /></div>
-                </div>
-                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
-                  <p className="text-xs font-bold text-white/60">Approved</p>
-                  <p className="mt-2 text-2xl font-black">INR 64K</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[64%] rounded-full bg-cyan-300" /></div>
-                </div>
-                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
-                  <p className="text-xs font-bold text-white/60">Receipts</p>
-                  <p className="mt-2 text-2xl font-black">18</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[88%] rounded-full bg-amber-300" /></div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <Users className="mb-3 text-cyan-100" size={24} />
-                <p className="text-2xl font-black">24</p>
-                <p className="text-sm font-bold text-white/65">Participants</p>
-              </div>
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <ShieldCheck className="mb-3 text-emerald-100" size={24} />
-                <p className="text-2xl font-black">Daily</p>
-                <p className="text-sm font-bold text-white/65">Auto backup</p>
-              </div>
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <Wifi className="mb-3 text-amber-100" size={24} />
-                <p className="text-2xl font-black">Offline</p>
-                <p className="text-sm font-bold text-white/65">Draft sync</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
+      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-7xl items-center gap-8 lg:grid-cols-[0.9fr_1.1fr]">
         <section className="auth-form-wrap order-1 mx-auto w-full max-w-md lg:mx-0">
-          <div className="auth-form-card rounded-[2rem] border border-white/60 bg-white/72 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
+          <div className="auth-form-card rounded-[2rem] border border-white/60 bg-white/78 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
             <div className="mb-6 flex items-start gap-4">
               <div className="auth-lock-badge rounded-3xl p-3 text-white shadow-lg"><LockKeyhole size={24} /></div>
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-500">Team Outing Expense Tracker</p>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Team Outing Expense Tracker</p>
                 <h1 className="mt-1 text-3xl font-black text-slate-950">{title}</h1>
-                <p className="mt-2 text-sm font-bold leading-6 text-slate-500">{modeDescription}</p>
+                <p className="mt-2 text-sm font-bold leading-6 text-slate-600">{modeDescription}</p>
               </div>
             </div>
 
-            <div className="mb-5 rounded-3xl border border-cyan-100 bg-cyan-50/80 p-4 text-sm font-bold leading-6 text-cyan-900">
+            <div className="mb-5 rounded-3xl border border-cyan-100 bg-cyan-50/90 p-4 text-sm font-bold leading-6 text-cyan-950">
               {inviteNotice}
             </div>
 
@@ -1098,7 +1033,7 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
                 type="button"
                 onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
               >
-                {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create an account'}
+                {mode === 'signup' ? 'Already have an account? Sign in' : 'New user? Create account'}
               </button>
             )}
 
@@ -1107,10 +1042,90 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
                 Back to sign in
               </button>
             )}
+
+            <div className="mt-6 grid grid-cols-2 gap-2 text-xs font-black text-slate-600 sm:grid-cols-3">
+              <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Budgets</span>
+              <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Receipts</span>
+              <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Reports</span>
+            </div>
           </div>
-          <p className="mt-5 text-center text-xs font-bold text-white/75 lg:text-slate-500">
+          <p className="mt-5 text-center text-xs font-bold text-white/75 lg:text-slate-200/75">
             Designed, engineered, and deployed by Satheeshkumar Balaji
           </p>
+        </section>
+
+        <section className="auth-showcase order-2 relative overflow-hidden rounded-[2rem] border border-white/35 bg-white/12 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8 lg:min-h-[620px] lg:p-10">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.28),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.20),transparent_36%)]" />
+          <div className="auth-route-line" />
+          <div className="relative z-10 flex h-full flex-col justify-between gap-8">
+            <div className="auth-showcase-copy">
+              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-4 py-2 text-xs font-black uppercase tracking-[0.22em] text-white/85 shadow-lg backdrop-blur-md">
+                <MapPin size={15} /> Outing workspace
+              </div>
+              <h2 className="max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
+                Manage every outing expense from one clear workspace.
+              </h2>
+              <p className="mt-5 max-w-2xl text-base font-semibold leading-8 text-white/78 sm:text-lg">
+                Plan the budget, collect participant contributions, approve expenses, track settlements, and export reports without spreadsheet confusion.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <WalletCards className="mb-3 text-cyan-100" size={24} />
+                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Plan</p>
+                <p className="mt-2 text-xl font-black">Budgets and collections</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">Set event budgets and record participant payments before the trip.</p>
+              </div>
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <Receipt className="mb-3 text-emerald-100" size={24} />
+                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Track</p>
+                <p className="mt-2 text-xl font-black">Receipts and approvals</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">Members submit expenses while Finance or Admin reviews them.</p>
+              </div>
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <ShieldCheck className="mb-3 text-amber-100" size={24} />
+                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Settle</p>
+                <p className="mt-2 text-xl font-black">Payments and balances</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">See who paid, who owes, and how much remains after settlements.</p>
+              </div>
+              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
+                <FileText className="mb-3 text-sky-100" size={24} />
+                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Report</p>
+                <p className="mt-2 text-xl font-black">Analytics and backups</p>
+                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">Export reports, view analytics, and keep daily backups ready.</p>
+              </div>
+            </div>
+
+            <div className="auth-dashboard-card rounded-[2rem] border border-white/25 bg-slate-950/38 p-5 shadow-2xl backdrop-blur-xl">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/80">Sample outing status</p>
+                  <h3 className="mt-1 text-2xl font-black text-white">Coorg team offsite</h3>
+                </div>
+                <div className="rounded-2xl bg-emerald-400/18 px-3 py-2 text-xs font-black text-emerald-100 ring-1 ring-emerald-200/30">
+                  Ready
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
+                  <p className="text-xs font-bold text-white/60">Collected</p>
+                  <p className="mt-2 text-2xl font-black">72%</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[72%] rounded-full bg-emerald-300" /></div>
+                </div>
+                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
+                  <p className="text-xs font-bold text-white/60">Approved</p>
+                  <p className="mt-2 text-2xl font-black">INR 64K</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[64%] rounded-full bg-cyan-300" /></div>
+                </div>
+                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
+                  <p className="text-xs font-bold text-white/60">Backups</p>
+                  <p className="mt-2 text-2xl font-black">Daily</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[88%] rounded-full bg-amber-300" /></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
       </div>
     </main>

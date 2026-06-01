@@ -370,11 +370,11 @@
   }
 
   .auth-showcase {
-    border-radius: 1.5rem;
-    padding: 1.25rem;
+    display: none;
   }
 
-  .auth-showcase h1 {
+  .auth-showcase h1,
+  .auth-showcase h2 {
     font-size: 2.15rem;
   }
 
