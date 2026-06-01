@@ -1,26 +1,38 @@
-# Team Outing Expense Tracker - Phase 8C Error Navigation Hotfix
+# Team Outing Expense Tracker - Phase 11 Analytics Dashboard
 
-This package is a small frontend-only hotfix for the Team Outing Expense Tracker app.
+This package upgrades the Team Outing Expense Tracker with a new Admin/Finance Analytics tab.
 
-## Included fix
+## Phase 11 summary
 
-Error screens now include clear navigation actions:
+The app now includes a dedicated Analytics dashboard that turns existing outing data into useful visual insight.
 
-- Retry
-- Go to home screen
-- Go to sign in
+Key additions:
 
-It also adds a React error boundary so unexpected UI errors do not trap users on a blank or dead-end screen.
+- Analytics tab for Admin and Finance users
+- Member users do not see the Analytics tab
+- Submitted, approved, pending, and rejected spend summary
+- Budget utilization percentage and progress bar
+- Top category and top contributor cards
+- Receipt coverage percentage
+- Budget versus actual category chart
+- Category spend share chart
+- Participant paid versus owed chart
+- Expense approval mix chart
+- Event comparison table across visible events
 
-## Files to copy
-
-Copy these files into your existing project:
+## Files changed
 
 ```text
 client/src/App.jsx
-docs/phase8c-error-navigation-hotfix.md
 README.md
+docs/phase11-analytics-dashboard.md
 ```
+
+## Backend changes
+
+No backend changes are required for this phase.
+
+The Analytics tab uses existing data from `/api/bootstrap`, including current event details, dashboard calculations, expenses, category spending, participant balances, and visible event summaries.
 
 ## Deploy steps
 
@@ -29,50 +41,20 @@ cd C:\Users\ksath\Downloads\team-outing-expense-tracker-mobile-pwa\team-outing-e
 
 git status
 
-git add client/src/App.jsx docs/phase8c-error-navigation-hotfix.md README.md
+git add -A
 
-git commit -m "Add navigation actions to error pages"
+git commit -m "Add analytics dashboard"
 
-git push
+git push origin main
 ```
 
-If Git says `fetch first`:
+Vercel should redeploy the frontend automatically after the push. Render does not need a backend environment change for Phase 11.
 
-```powershell
-git pull --rebase origin main
-git push
-```
+## Testing checklist
 
-Vercel should redeploy automatically. Render does not need redeploy because this is frontend-only.
-
-## Phase 9: Email Invitation Delivery
-
-The invitation workflow now sends invite links by email using the configured SMTP sender. Admins can see delivery status, resend pending invite emails, and still copy invite links manually as a fallback.
-
-Key additions:
-
-- Invite email delivery on invite creation
-- Email status tracking for invites
-- Resend email action for pending invites
-- Audit entries for sent/failed/resend email actions
-
-## Phase 10: Receipt Storage Cleanup
-
-The backend now cleans up old Supabase Storage receipt files when receipts are no longer referenced by app data. This prevents orphaned JPG/PNG/WebP/PDF files from accumulating in the `receipts` bucket.
-
-Key additions:
-
-- Delete linked receipt file when an expense is deleted
-- Delete old receipt file when a receipt is replaced or removed
-- Clean up receipt references during draft event deletion
-- Add receipt cleanup audit entries
-- Log cleanup success/failure safely in Render
-- Add `receiptCleanup` status to `/api/health`
-
-Files changed for Phase 10:
-
-```text
-server/src/index.js
-docs/phase10-receipt-cleanup.md
-README.md
-```
+1. Sign in as Admin and confirm the Analytics tab is visible.
+2. Sign in as Finance and confirm the Analytics tab is visible while Roles remains hidden.
+3. Sign in as Member and confirm the Analytics tab is hidden.
+4. Compare Analytics totals against Dashboard and Reports.
+5. Confirm charts render on desktop and mobile.
+6. Confirm event comparison table shows visible events.

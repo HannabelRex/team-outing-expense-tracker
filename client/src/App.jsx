@@ -755,6 +755,216 @@ function Dashboard({ data }) {
   );
 }
 
+
+function AnalyticsDashboard({ data }) {
+  if (data.noAssignedEvent) {
+    return (
+      <Section title="Analytics" icon={WalletCards}>
+        <EmptyState title="No analytics yet" body="Analytics will appear once this account is assigned to an outing. Data cannot visualize itself, despite many optimistic project plans." />
+      </Section>
+    );
+  }
+
+  const currency = data.event.currency;
+  const expenses = data.expenses || [];
+  const categories = data.dashboard?.categorySpending || [];
+  const eventList = data.eventList || [];
+  const approvedExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'approved');
+  const pendingExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
+  const rejectedExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'rejected');
+  const approvedAmount = approvedExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const pendingAmount = pendingExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const rejectedAmount = rejectedExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const submittedAmount = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const budget = Number(data.event.estimatedBudget || data.dashboard?.totalBudget || 0);
+  const budgetUsed = budget > 0 ? Math.min(999, (data.dashboard.totalSpent / budget) * 100) : 0;
+  const receiptsAttached = expenses.filter((expense) => expense.receipt).length;
+  const categoryChartData = categories.map((category) => ({
+    name: category.name,
+    Estimated: Number(category.estimatedCost || 0),
+    Actual: Number(category.actualCost || 0),
+    variance: Number(category.actualCost || 0) - Number(category.estimatedCost || 0)
+  }));
+  const categoryPieData = categories
+    .filter((category) => Number(category.actualCost || 0) > 0)
+    .map((category) => ({ name: category.name, value: Number(category.actualCost || 0) }));
+  const participantContributionData = (data.dashboard?.participantBalances || [])
+    .map((person) => ({
+      name: person.name,
+      Paid: Number(person.amountPaid || 0),
+      Owed: Number(person.amountOwed || 0),
+      Net: Number(person.netBalance || 0)
+    }))
+    .sort((a, b) => b.Paid - a.Paid);
+  const statusChartData = [
+    { name: 'Approved', amount: approvedAmount, count: approvedExpenses.length },
+    { name: 'Pending', amount: pendingAmount, count: pendingExpenses.length },
+    { name: 'Rejected', amount: rejectedAmount, count: rejectedExpenses.length }
+  ].filter((item) => item.amount > 0 || item.count > 0);
+  const eventComparison = eventList.map((eventItem) => ({
+    ...eventItem,
+    budgetUsed: Number(eventItem.estimatedBudget || 0) > 0 ? (Number(eventItem.totalSpent || 0) / Number(eventItem.estimatedBudget || 0)) * 100 : 0
+  }));
+  const topCategory = [...categories].sort((a, b) => Number(b.actualCost || 0) - Number(a.actualCost || 0))[0];
+  const topContributor = [...participantContributionData].sort((a, b) => b.Paid - a.Paid)[0];
+
+  return (
+    <div className="space-y-6">
+      <Section title="Analytics overview" icon={WalletCards}>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Submitted spend" value={money(submittedAmount, currency)} helper="All approved, pending, and rejected expenses" />
+          <StatCard label="Approved spend" value={money(approvedAmount, currency)} helper={`${approvedExpenses.length} approved expense${approvedExpenses.length === 1 ? '' : 's'}`} />
+          <StatCard label="Pending review" value={money(pendingAmount, currency)} helper={`${pendingExpenses.length} pending expense${pendingExpenses.length === 1 ? '' : 's'}`} danger={pendingAmount > 0} />
+          <StatCard label="Budget used" value={`${budgetUsed.toFixed(1)}%`} helper={`${money(data.dashboard.totalSpent, currency)} of ${money(budget, currency)}`} danger={budgetUsed > 100} />
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Top category</p>
+            <p className="mt-2 text-xl font-black text-slate-950">{topCategory?.name || 'None yet'}</p>
+            <p className="mt-1 text-sm text-slate-500">{topCategory ? money(topCategory.actualCost, currency) : 'Add expenses to calculate this.'}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Top contributor</p>
+            <p className="mt-2 text-xl font-black text-slate-950">{topContributor?.name || 'None yet'}</p>
+            <p className="mt-1 text-sm text-slate-500">{topContributor ? money(topContributor.Paid, currency) : 'No payments recorded yet.'}</p>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-100">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Receipt coverage</p>
+            <p className="mt-2 text-xl font-black text-slate-950">{expenses.length ? `${((receiptsAttached / expenses.length) * 100).toFixed(1)}%` : '0.0%'}</p>
+            <p className="mt-1 text-sm text-slate-500">{receiptsAttached} of {expenses.length} expenses have receipts</p>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Budget utilization" icon={WalletCards}>
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span className="font-bold text-slate-700">Current event budget usage</span>
+            <span className={budgetUsed > 100 ? 'font-black text-rose-700' : 'font-black text-emerald-700'}>{budgetUsed.toFixed(1)}%</span>
+          </div>
+          <div className="h-4 overflow-hidden rounded-full bg-slate-100">
+            <div className={`h-full rounded-full ${budgetUsed > 100 ? 'bg-rose-500' : 'bg-slate-900'}`} style={{ width: `${Math.min(100, budgetUsed)}%` }} />
+          </div>
+          <div className="grid gap-3 text-sm md:grid-cols-4">
+            <div className="rounded-2xl bg-slate-50 p-4"><p className="text-slate-500">Budget</p><p className="font-black text-slate-950">{money(budget, currency)}</p></div>
+            <div className="rounded-2xl bg-slate-50 p-4"><p className="text-slate-500">Spent</p><p className="font-black text-slate-950">{money(data.dashboard.totalSpent, currency)}</p></div>
+            <div className="rounded-2xl bg-slate-50 p-4"><p className="text-slate-500">Remaining</p><p className={`font-black ${data.dashboard.remainingBudget < 0 ? 'text-rose-700' : 'text-slate-950'}`}>{money(data.dashboard.remainingBudget, currency)}</p></div>
+            <div className="rounded-2xl bg-slate-50 p-4"><p className="text-slate-500">Rejected spend</p><p className="font-black text-slate-950">{money(rejectedAmount, currency)}</p></div>
+          </div>
+        </div>
+      </Section>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Section title="Budget vs actual by category" icon={WalletCards}>
+          <div className="h-80">
+            {categoryChartData.length === 0 ? <EmptyState title="No category data" body="Add budget categories and expenses to see category analytics." /> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={categoryChartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip formatter={(value) => money(value, currency)} />
+                  <Legend />
+                  <Bar dataKey="Estimated" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="Actual" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Section>
+
+        <Section title="Spend share by category" icon={WalletCards}>
+          <div className="h-80">
+            {categoryPieData.length === 0 ? <EmptyState title="No spend yet" body="Once expenses are added, this chart shows where the money escaped." /> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={categoryPieData} dataKey="value" nameKey="name" outerRadius={105} label>
+                    {categoryPieData.map((entry) => <Cell key={entry.name} />)}
+                  </Pie>
+                  <Tooltip formatter={(value) => money(value, currency)} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Section>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Section title="Participant contribution" icon={Users}>
+          <div className="h-80">
+            {participantContributionData.length === 0 ? <EmptyState title="No participant contribution" body="Add participants and expenses to see who paid what." /> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={participantContributionData} layout="vertical" margin={{ left: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={110} />
+                  <Tooltip formatter={(value) => money(value, currency)} />
+                  <Legend />
+                  <Bar dataKey="Paid" radius={[0, 8, 8, 0]} />
+                  <Bar dataKey="Owed" radius={[0, 8, 8, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Section>
+
+        <Section title="Expense approval mix" icon={ShieldCheck}>
+          <div className="h-80">
+            {statusChartData.length === 0 ? <EmptyState title="No expense status data" body="Expense approval analytics will show here after expenses are submitted." /> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={statusChartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip formatter={(value, name) => (name === 'Amount' ? money(value, currency) : value)} />
+                  <Legend />
+                  <Bar dataKey="amount" name="Amount" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="count" name="Count" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Section>
+      </div>
+
+      <Section title="Event comparison" icon={CalendarDays}>
+        {eventComparison.length === 0 ? <EmptyState title="No events to compare" body="Create more events to compare spending patterns." /> : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500">
+                  <th className="p-3">Event</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Budget</th>
+                  <th className="p-3">Spent</th>
+                  <th className="p-3">Used</th>
+                  <th className="p-3">Participants</th>
+                  <th className="p-3">Expenses</th>
+                </tr>
+              </thead>
+              <tbody>
+                {eventComparison.map((eventItem) => (
+                  <tr key={eventItem.id} className="border-t border-slate-100">
+                    <td className="p-3 font-bold text-slate-900">{eventItem.name}</td>
+                    <td className="p-3"><span className={statusBadge(eventItem.status)}>{eventItem.status}</span></td>
+                    <td className="p-3">{money(eventItem.estimatedBudget, eventItem.currency || currency)}</td>
+                    <td className="p-3">{money(eventItem.totalSpent, eventItem.currency || currency)}</td>
+                    <td className={`p-3 font-bold ${eventItem.budgetUsed > 100 ? 'text-rose-700' : 'text-slate-700'}`}>{eventItem.budgetUsed.toFixed(1)}%</td>
+                    <td className="p-3">{eventItem.participantCount}</td>
+                    <td className="p-3">{eventItem.expenseCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+
 function EventSetup({ data, reload, setToast, canManageEventSetup }) {
   const [form, setForm] = useState(data.event);
 
@@ -2401,6 +2611,7 @@ function AppShell() {
   const canViewEvents = currentRole === 'admin' || currentRole === 'finance';
   const canSwitchEvents = hasAssignedEvent && (canViewEvents || (currentRole === 'member' && (data?.eventList?.length || 0) > 1));
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
+  const canViewAnalytics = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
   const canViewAudit = currentRole === 'admin' || currentRole === 'finance';
   const canManageEventSetup = currentRole === 'admin' || currentRole === 'finance';
@@ -2428,6 +2639,10 @@ function AppShell() {
       );
     }
 
+    if (canViewAnalytics && (hasAssignedEvent || canViewEvents)) {
+      visibleTabs.push(['analytics', 'Analytics']);
+    }
+
     if (canViewNotifications) {
       visibleTabs.push(['notifications', 'Notifications']);
     }
@@ -2441,7 +2656,7 @@ function AppShell() {
     }
 
     return visibleTabs;
-  }, [canViewEvents, canViewNotifications, canViewAudit, canViewRoles, hasAssignedEvent]);
+  }, [canViewEvents, canViewAnalytics, canViewNotifications, canViewAudit, canViewRoles, hasAssignedEvent]);
 
   useEffect(() => {
     const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
@@ -2563,6 +2778,7 @@ function AppShell() {
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
+        {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
         {activeTab === 'audit' && canViewAudit && <AuditTrail data={data} setToast={setToast} />}
         {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
