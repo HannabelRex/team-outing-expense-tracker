@@ -988,7 +988,7 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.32),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.22),transparent_36%)]" />
           <div className="auth-route-line" />
           <div className="relative z-10 flex h-full flex-col justify-between gap-8">
-            <div>
+            <div className="auth-showcase-copy">
               <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-4 py-2 text-xs font-black uppercase tracking-[0.25em] text-white/85 shadow-lg backdrop-blur-md">
                 <MapPin size={15} /> Team outing control room
               </div>

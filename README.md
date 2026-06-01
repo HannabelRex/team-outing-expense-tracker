@@ -458,3 +458,7 @@ The hotfix preserves all existing authentication flows:
 - Password reset
 
 No backend routes, database changes, or environment variables are required. Animations are CSS-only and support reduced-motion preferences.
+
+## Login floating cards safe-space hotfix
+
+The glassmorphism login screen now keeps animated flyer cards in safer edge positions and behind the main content layer. The headline, form, and dashboard preview remain readable while the decorative budget/receipt/approval/settlement cards continue to animate in the empty visual spaces.
