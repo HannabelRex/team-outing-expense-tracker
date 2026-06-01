@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -135,6 +135,69 @@ function showActionError(setToast, err) {
   setToast(err?.message || 'Action failed. The app tried, the universe objected.');
 }
 
+function clearSavedLoginAndGoToSignIn() {
+  try {
+    saveSession(null);
+    setApiAccessToken('');
+  } catch {
+    // If storage is unavailable, a full reload still gets the user unstuck.
+  }
+  window.location.href = window.location.origin + window.location.pathname;
+}
+
+function goToAppHome() {
+  window.location.href = window.location.origin + window.location.pathname;
+}
+
+function ErrorRecoveryCard({ title = 'Something went wrong', message, onRetry, onSignIn }) {
+  return (
+    <div className="grid min-h-screen place-items-center bg-slate-100 p-6">
+      <div className="max-w-lg rounded-3xl bg-white p-6 shadow-soft ring-1 ring-slate-100">
+        <div className="flex items-start gap-3">
+          <div className="rounded-2xl bg-rose-100 p-3 text-rose-700"><AlertTriangle size={24} /></div>
+          <div>
+            <p className="text-lg font-black text-slate-950">{title}</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{message || 'The app hit an error page. It now has exits, because trapping users on an error screen was apparently too villainous.'}</p>
+          </div>
+        </div>
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button className="btn-primary" onClick={onRetry || (() => window.location.reload())}>Retry</button>
+          <button className="btn-secondary" onClick={goToAppHome}>Go to home screen</button>
+          <button className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800" onClick={onSignIn || clearSavedLoginAndGoToSignIn}>Go to sign in</button>
+        </div>
+        <p className="mt-4 text-xs text-slate-400">If the error keeps returning, sign in again so the app can start with a clean session instead of dragging stale browser baggage around.</p>
+      </div>
+    </div>
+  );
+}
+
+class AppErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error) {
+    console.error('Recovered app render error:', error);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <ErrorRecoveryCard
+          title="The app hit an unexpected error"
+          message={this.state.error?.message || 'A screen failed to render. Very rude, but at least you are not trapped here anymore.'}
+          onRetry={() => this.setState({ error: null })}
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
 
 
 function fileToBase64(file) {
@@ -2125,7 +2188,7 @@ function AuditTrail({ data, setToast }) {
   );
 }
 
-export default function App() {
+function AppShell() {
   const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(true);
@@ -2344,7 +2407,14 @@ export default function App() {
   }
 
   if (error && !data) {
-    return <div className="grid min-h-screen place-items-center bg-slate-100 p-6"><div className="rounded-3xl bg-white p-6 shadow-soft"><p className="font-bold text-rose-700">{error}</p><button className="btn-primary mt-4" onClick={reload}>Retry</button></div></div>;
+    return (
+      <ErrorRecoveryCard
+        title="Could not load your dashboard"
+        message={error}
+        onRetry={reload}
+        onSignIn={logout}
+      />
+    );
   }
 
   if (!data) {
@@ -2450,5 +2520,14 @@ export default function App() {
         Mobile PWA mode · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>
+  );
+}
+
+
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppShell />
+    </AppErrorBoundary>
   );
 }
