@@ -320,3 +320,14 @@ Health flags added:
 - `userInvitations: enabled`
 - `inviteLinks: manual-copy`
 - `inviteAutoParticipantTagging: enabled`
+
+
+## Phase 8B - Session Timeout
+
+The app now supports a client-side idle session timeout. By default users are asked to sign in again after 30 minutes of inactivity. To change the duration, add this Vercel environment variable:
+
+```text
+VITE_SESSION_TIMEOUT_MINUTES=30
+```
+
+Set it to `1` temporarily when testing.

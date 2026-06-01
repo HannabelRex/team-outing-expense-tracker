@@ -706,6 +706,7 @@ app.get('/api/health', (req, res) => {
     userInvitations: 'enabled',
     inviteLinks: 'manual-copy',
     inviteAutoParticipantTagging: 'enabled',
+    sessionTimeout: 'client-enforced',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });

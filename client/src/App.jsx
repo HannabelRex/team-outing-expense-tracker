@@ -44,6 +44,9 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const SUPABASE_AUTH_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SESSION_STORAGE_KEY = 'team-outing-session-v1';
+const SESSION_LAST_ACTIVITY_KEY = 'team-outing-last-activity-v1';
+const SESSION_TIMEOUT_MINUTES = Math.max(1, Number(import.meta.env.VITE_SESSION_TIMEOUT_MINUTES || 30));
+const SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MINUTES * 60 * 1000;
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -146,6 +149,42 @@ function fileToBase64(file) {
   });
 }
 
+
+function clearSessionActivity() {
+  try {
+    window.localStorage.removeItem(SESSION_LAST_ACTIVITY_KEY);
+  } catch {
+    // localStorage may be unavailable in rare browser privacy modes.
+  }
+}
+
+function touchSessionActivity() {
+  try {
+    window.localStorage.setItem(SESSION_LAST_ACTIVITY_KEY, String(Date.now()));
+  } catch {
+    // localStorage may be unavailable in rare browser privacy modes.
+  }
+}
+
+function readLastSessionActivity() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_LAST_ACTIVITY_KEY);
+    return raw ? Number(raw) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function isSessionTimedOut() {
+  const lastActivity = readLastSessionActivity();
+  if (!lastActivity) return false;
+  return Date.now() - lastActivity > SESSION_TIMEOUT_MS;
+}
+
+function sessionTimeoutMessage() {
+  return `Your session timed out after ${SESSION_TIMEOUT_MINUTES} minutes. Please sign in again.`;
+}
+
 async function refreshSavedSessionToken() {
   const savedSession = readSavedSession();
   const refreshToken = savedSession?.refresh_token;
@@ -181,6 +220,13 @@ async function refreshSavedSessionToken() {
 }
 
 async function api(path, options = {}) {
+  if (apiAccessToken && isSessionTimedOut()) {
+    saveSession(null);
+    setApiAccessToken('');
+    throw new Error(sessionTimeoutMessage());
+  }
+  if (apiAccessToken) touchSessionActivity();
+
   async function request() {
     const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
     if (apiAccessToken) headers.Authorization = `Bearer ${apiAccessToken}`;
@@ -212,6 +258,13 @@ async function api(path, options = {}) {
 
 
 async function downloadApiFile(path, fileName) {
+  if (apiAccessToken && isSessionTimedOut()) {
+    saveSession(null);
+    setApiAccessToken('');
+    throw new Error(sessionTimeoutMessage());
+  }
+  if (apiAccessToken) touchSessionActivity();
+
   const headers = {};
   if (apiAccessToken) headers.Authorization = `Bearer ${apiAccessToken}`;
 
@@ -243,7 +296,16 @@ function reportFileBaseName(eventName = 'team-outing') {
 function readSavedSession() {
   try {
     const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (isSessionTimedOut()) {
+      saveSession(null);
+      return null;
+    }
+    if (!readLastSessionActivity()) {
+      touchSessionActivity();
+    }
+    return saved;
   } catch {
     return null;
   }
@@ -252,9 +314,13 @@ function readSavedSession() {
 function saveSession(session) {
   if (!session) {
     window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    clearSessionActivity();
     return;
   }
   window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  if (!readLastSessionActivity()) {
+    touchSessionActivity();
+  }
 }
 
 function readRecoverySessionFromUrl() {
@@ -297,7 +363,7 @@ async function supabaseAuthRequest(path, payload, extra = {}) {
   return body;
 }
 
-function AuthScreen({ onSession, setToast }) {
+function AuthScreen({ onSession, setToast, initialMessage = '' }) {
   const [recoverySession] = useState(() => readRecoverySessionFromUrl());
   const [inviteContext] = useState(() => {
     const params = new URLSearchParams(window.location.search || '');
@@ -309,7 +375,7 @@ function AuthScreen({ onSession, setToast }) {
   const [mode, setMode] = useState(() => recoverySession ? 'reset' : inviteContext.token ? 'signup' : 'login');
   const [form, setForm] = useState(() => ({ name: '', email: inviteContext.email || '', password: '', confirmPassword: '' }));
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState(() => inviteContext.token ? 'You opened an invite link. Create an account with the invited email, or sign in if you already have one.' : '');
+  const [message, setMessage] = useState(() => inviteContext.token ? 'You opened an invite link. Create an account with the invited email, or sign in if you already have one.' : initialMessage);
 
   async function submit(event) {
     event.preventDefault();
@@ -2065,6 +2131,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState(() => readSavedSession() ? '' : '');
   const [session, setSession] = useState(() => readSavedSession());
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState([]);
@@ -2072,6 +2139,12 @@ export default function App() {
 
   function handleSession(nextSession) {
     const hasToken = Boolean(nextSession?.access_token);
+    if (hasToken) {
+      touchSessionActivity();
+      setSessionExpiredMessage('');
+    } else {
+      clearSessionActivity();
+    }
     setLoading(hasToken);
     setError('');
     if (hasToken) {
@@ -2082,10 +2155,23 @@ export default function App() {
     setApiAccessToken(nextSession?.access_token || '');
   }
 
+  function expireSession() {
+    handleSession(null);
+    setData(null);
+    setError('');
+    setToast('');
+    setInboxOpen(false);
+    setInboxItems([]);
+    setSessionExpiredMessage(sessionTimeoutMessage());
+  }
+
   function logout() {
     handleSession(null);
     setData(null);
     setError('');
+    setInboxOpen(false);
+    setInboxItems([]);
+    setSessionExpiredMessage('');
     setToast('Signed out. The app will now stop trusting you, professionally.');
   }
 
@@ -2162,6 +2248,34 @@ export default function App() {
   }, [data?.activeEventId, data?.noAssignedEvent, session?.access_token]);
 
   useEffect(() => {
+    if (!session?.access_token) return undefined;
+
+    const activityEvents = ['click', 'keydown', 'mousemove', 'scroll', 'touchstart'];
+    let lastTouch = 0;
+    const handleActivity = () => {
+      const now = Date.now();
+      if (now - lastTouch > 5000) {
+        touchSessionActivity();
+        lastTouch = now;
+      }
+    };
+
+    handleActivity();
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, handleActivity, { passive: true }));
+
+    const timer = window.setInterval(() => {
+      if (isSessionTimedOut()) {
+        expireSession();
+      }
+    }, 15000);
+
+    return () => {
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, handleActivity));
+      window.clearInterval(timer);
+    };
+  }, [session?.access_token]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(''), 3200);
     return () => window.clearTimeout(timer);
@@ -2222,7 +2336,7 @@ export default function App() {
   }, [activeTab, tabs]);
 
   if (!session?.access_token) {
-    return <AuthScreen onSession={handleSession} setToast={setToast} />;
+    return <AuthScreen onSession={handleSession} setToast={setToast} initialMessage={sessionExpiredMessage} />;
   }
 
   if (loading && !data) {
