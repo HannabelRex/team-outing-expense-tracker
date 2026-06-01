@@ -1,47 +1,53 @@
-# Team Outing Expense Tracker - Phase 13 Offline Expense Sync
+# Team Outing Expense Tracker - Phase 14 Offline Receipt Sync
 
-This package upgrades the Team Outing Expense Tracker with an offline expense draft queue and automatic sync.
+This package upgrades the Team Outing Expense Tracker with offline receipt attachment support for expense drafts.
 
-## Phase 13 summary
+## Phase 14 summary
 
-Phase 13 builds on Phase 12 Offline PWA Mode. Users can now create text-only expense drafts while offline. The drafts are saved locally on the device and synced to the backend when the app reconnects.
+Phase 14 builds on Phase 13 Offline Expense Draft Queue. Users can now create offline expense drafts with receipt files attached. The app stores the draft metadata in `localStorage`, stores receipt files in IndexedDB, uploads the receipt during sync, and only deletes the local draft after the expense is saved successfully.
 
 Key additions:
 
-- Offline expense draft creation from the Expenses form
-- Local draft queue using browser `localStorage`
-- Offline expense draft section in the Expenses tab
-- Automatic draft sync after reconnecting
-- Manual `Sync now` button
-- Delete draft button
-- Per-draft status, sync attempts, last attempt timestamp, and error display
-- Receipt upload remains blocked while offline
-- Member users are blocked from creating offline drafts paid by another participant profile
-- Existing backend expense validation remains the final safety gate
+- Attach receipt files while offline for new expense drafts
+- Store offline receipt files in IndexedDB
+- Show receipt file name, size, and sync status in the Offline expense drafts queue
+- Upload receipt first during sync, then create the expense with the uploaded receipt reference
+- Preserve failed drafts and show sync errors
+- Avoid duplicate receipt uploads when receipt upload succeeds but expense creation fails
+- Delete local receipt blob after successful sync or draft deletion
+- Service worker cache bumped to `team-outing-expense-tracker-v5`
 
 ## Files changed
 
 ```text
 client/src/App.jsx
+client/src/offlineStorage.js
+client/public/service-worker.js
 README.md
-docs/phase13-offline-expense-sync.md
+docs/phase14-offline-receipt-sync.md
 ```
 
 ## Backend changes
 
-No backend routes or environment variables are required for Phase 13.
+No new backend routes or Render environment variables are required for Phase 14.
 
-Draft sync reuses the existing authenticated endpoint:
+The sync flow reuses existing authenticated endpoints:
 
 ```text
+POST /api/receipts/upload
 POST /api/expenses
 ```
 
-The backend continues to enforce event access, role restrictions, member paid-by ownership, category validity, participant validity, and normal expense validation.
+The backend continues to enforce event access, role restrictions, member paid-by ownership, category validity, participant validity, receipt validation, and normal expense validation.
 
-## Important limitation
+## Important notes
 
-Offline drafts do not support receipt files yet. Receipt upload still requires online Supabase Storage access. Users can save the expense draft offline, sync it later, then attach the receipt online.
+- Offline receipt support applies to new offline expense drafts only.
+- Existing expense edits remain blocked offline.
+- Offline receipt files are saved only on the current browser/device.
+- Clearing browser storage deletes local offline drafts and receipt files.
+- Supported receipt types remain JPG, PNG, WebP, and PDF.
+- Max receipt size remains 4 MB.
 
 ## Deploy steps
 
@@ -52,23 +58,26 @@ git status
 
 git add -A
 
-git commit -m "Add offline expense draft sync"
+git commit -m "Add offline receipt sync"
 
 git push origin main
 ```
 
-Vercel should redeploy the frontend automatically after the push. Render does not need a backend environment change for Phase 13.
+Vercel should redeploy the frontend automatically after the push. Render does not need a backend environment change for Phase 14.
 
 ## Testing checklist
 
 1. Sign in while online and open the Expenses tab.
 2. Switch Chrome DevTools Network to Offline.
-3. Create a new expense without a receipt.
-4. Confirm the button says `Save offline draft`.
-5. Save the draft and confirm it appears in Offline expense drafts.
-6. Refresh while offline and confirm the draft remains.
-7. Restore the network.
-8. Confirm the draft syncs automatically and appears in the expense list.
-9. Create another offline draft and test `Sync now` manually.
-10. Test Member role safety by trying to save a draft paid by another participant.
-
+3. Create a new expense.
+4. Attach a JPG, PNG, WebP, or PDF receipt under 4 MB.
+5. Confirm the form says the receipt is queued offline.
+6. Save the draft.
+7. Confirm the Offline expense drafts queue shows the receipt name and size.
+8. Refresh while offline and confirm the draft remains.
+9. Restore network.
+10. Confirm the draft syncs automatically.
+11. Confirm the expense appears in the expense list.
+12. Confirm the receipt link opens.
+13. Test `Sync now` manually with another draft.
+14. Delete a draft with a receipt and confirm it disappears from the queue.

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'team-outing-expense-tracker-v4';
+const CACHE_NAME = 'team-outing-expense-tracker-v5';
 const APP_SHELL = [
   '/',
   '/index.html',

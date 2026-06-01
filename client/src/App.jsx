@@ -41,6 +41,7 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
+import { deleteOfflineReceiptFile, readOfflineReceiptFile, saveOfflineReceiptFile } from './offlineStorage';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
 const SUPABASE_AUTH_URL = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
@@ -52,6 +53,8 @@ const SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MINUTES * 60 * 1000;
 const BOOTSTRAP_CACHE_KEY = 'team-outing-bootstrap-cache-v1';
 const LAST_SYNCED_AT_KEY = 'team-outing-last-synced-at-v1';
 const OFFLINE_EXPENSE_DRAFTS_KEY = 'team-outing-offline-expense-drafts-v1';
+const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -71,6 +74,8 @@ const emptyExpenseForm = {
   notes: '',
   receiptFileName: '',
   receipt: null,
+  offlineReceiptFile: null,
+  offlineReceiptInfo: null,
   isRecurring: false,
   approvalStatus: 'pending'
 };
@@ -100,6 +105,8 @@ function buildDefaultExpenseForm(data, expense = null) {
       notes: expense.notes || '',
       receiptFileName: expense.receipt?.fileName || '',
       receipt: expense.receipt || null,
+      offlineReceiptFile: null,
+      offlineReceiptInfo: null,
       isRecurring: Boolean(expense.isRecurring),
       approvalStatus: expense.approvalStatus || 'pending'
     };
@@ -133,6 +140,8 @@ function buildExpensePayload(form) {
   delete payload.customSplitsText;
   delete payload.percentageSplitsText;
   delete payload.receiptFileName;
+  delete payload.offlineReceiptFile;
+  delete payload.offlineReceiptInfo;
   return payload;
 }
 
@@ -312,8 +321,6 @@ function validateOfflineExpenseDraft(data, payload) {
   const participantIds = new Set(data.participants.map((participant) => participant.id));
   const missingParticipant = payload.participantIds.find((participantId) => !participantIds.has(participantId));
   if (missingParticipant) throw new Error('One selected participant is no longer valid. Refresh when online before syncing.');
-  if (payload.receipt) throw new Error('Offline drafts do not support receipt files yet. Save the expense offline first, then attach the receipt after syncing. Tiny limitation, major honesty.');
-
   if (data.currentUser?.role === 'member') {
     const paidByParticipant = data.participants.find((participant) => participant.id === payload.paidByParticipantId);
     if (!participantMatchesCurrentUser(paidByParticipant, data.currentUser)) {
@@ -322,7 +329,7 @@ function validateOfflineExpenseDraft(data, payload) {
   }
 }
 
-function buildOfflineExpenseDraft(data, payload) {
+function buildOfflineExpenseDraft(data, payload, receiptInfo = null) {
   validateOfflineExpenseDraft(data, payload);
   const now = new Date().toISOString();
   return {
@@ -333,6 +340,9 @@ function buildOfflineExpenseDraft(data, payload) {
     status: 'waiting',
     attempts: 0,
     lastError: '',
+    receiptStatus: receiptInfo ? 'queued' : (payload.receipt ? 'uploaded' : 'none'),
+    offlineReceipt: receiptInfo ? { ...receiptInfo } : null,
+    uploadedReceipt: payload.receipt || null,
     eventId: data.activeEventId,
     eventName: data.event?.name || 'Current outing',
     userId: data.currentUser?.id || '',
@@ -348,6 +358,33 @@ function draftStatusBadge(status = 'waiting') {
   if (status === 'syncing') return 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-blue-50 text-blue-700 ring-blue-200';
   if (status === 'failed') return 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-rose-50 text-rose-700 ring-rose-200';
   return 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-amber-50 text-amber-700 ring-amber-200';
+}
+
+function validateReceiptFile(file) {
+  if (!file) throw new Error('Pick a receipt file first. The app cannot upload vibes.');
+  if (!ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+    throw new Error('Only JPG, PNG, WebP, and PDF receipts are allowed. The app has standards now, apparently.');
+  }
+  if (file.size > MAX_RECEIPT_BYTES) {
+    throw new Error('Receipt is too large. Maximum size is 4 MB. Compress it before the cloud starts wheezing.');
+  }
+}
+
+function buildOfflineReceiptInfo(file) {
+  return {
+    fileName: file.name || 'receipt',
+    contentType: file.type || 'application/octet-stream',
+    sizeBytes: Number(file.size || 0),
+    savedAt: new Date().toISOString()
+  };
+}
+
+function formatBytes(value = 0) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 
@@ -1663,21 +1700,30 @@ function Expenses({ data, reload, setToast, isOnline }) {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    try {
+      validateReceiptFile(file);
+    } catch (err) {
+      showActionError(setToast, err);
+      event.target.value = '';
+      return;
+    }
+
     if (!isOnline) {
-      setToast('Receipt upload needs the server. Save an offline expense draft now and attach the receipt after sync.');
-      event.target.value = '';
-      return;
-    }
+      if (editingExpenseId) {
+        setToast('Offline receipt attachment is only available for new drafts. Reconnect before editing existing expenses.');
+        event.target.value = '';
+        return;
+      }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-    if (!allowedTypes.includes(file.type)) {
-      setToast('Only JPG, PNG, WebP, and PDF receipts are allowed. The app has standards now, apparently.');
-      event.target.value = '';
-      return;
-    }
-
-    if (file.size > 4 * 1024 * 1024) {
-      setToast('Receipt is too large. Maximum size is 4 MB. Compress it before the cloud starts wheezing.');
+      const receiptInfo = buildOfflineReceiptInfo(file);
+      setForm((current) => ({
+        ...current,
+        receipt: null,
+        receiptFileName: receiptInfo.fileName,
+        offlineReceiptFile: file,
+        offlineReceiptInfo: receiptInfo
+      }));
+      setToast('Receipt attached to the offline draft. It will upload during sync, because files apparently need special treatment.');
       event.target.value = '';
       return;
     }
@@ -1689,7 +1735,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
         method: 'POST',
         body: JSON.stringify({ fileName: file.name, contentType: file.type, base64 })
       });
-      setForm((current) => ({ ...current, receipt, receiptFileName: receipt.fileName }));
+      setForm((current) => ({ ...current, receipt, receiptFileName: receipt.fileName, offlineReceiptFile: null, offlineReceiptInfo: null }));
       setToast('Receipt uploaded and attached. The paper trail has entered the chat.');
     } catch (err) {
       showActionError(setToast, err);
@@ -1700,7 +1746,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
   }
 
   function clearReceipt() {
-    setForm((current) => ({ ...current, receipt: null, receiptFileName: '' }));
+    setForm((current) => ({ ...current, receipt: null, receiptFileName: '', offlineReceiptFile: null, offlineReceiptInfo: null }));
   }
 
   function toggleParticipant(id) {
@@ -1710,14 +1756,24 @@ function Expenses({ data, reload, setToast, isOnline }) {
     setForm({ ...form, participantIds: next });
   }
 
-  function saveOfflineDraft(payload) {
-    const draft = buildOfflineExpenseDraft(data, payload);
-    const allDrafts = readOfflineExpenseDrafts();
-    const nextDrafts = [...allDrafts, draft];
-    saveOfflineExpenseDrafts(nextDrafts);
-    refreshOfflineDrafts();
-    resetForm();
-    setToast('Offline expense draft saved on this device. It will sync when the internet behaves again.');
+  async function saveOfflineDraft(payload, receiptFile = null, receiptInfo = null) {
+    const draft = buildOfflineExpenseDraft(data, payload, receiptInfo);
+    try {
+      if (receiptFile && receiptInfo) {
+        await saveOfflineReceiptFile(draft.id, receiptFile, receiptInfo);
+      }
+      const allDrafts = readOfflineExpenseDrafts();
+      const nextDrafts = [...allDrafts, draft];
+      saveOfflineExpenseDrafts(nextDrafts);
+      refreshOfflineDrafts();
+      resetForm();
+      setToast(receiptInfo
+        ? 'Offline expense draft and receipt saved on this device. Both will sync when the internet behaves again.'
+        : 'Offline expense draft saved on this device. It will sync when the internet behaves again.');
+    } catch (err) {
+      if (receiptFile) await deleteOfflineReceiptFile(draft.id).catch(() => null);
+      throw err;
+    }
   }
 
   async function syncOfflineDrafts({ automatic = false } = {}) {
@@ -1744,6 +1800,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
         allDrafts = allDrafts.map((item) => item.id === draft.id ? {
           ...item,
           status: 'syncing',
+          receiptStatus: item.offlineReceipt && !item.uploadedReceipt ? 'uploading' : item.receiptStatus,
           attempts: Number(item.attempts || 0) + 1,
           lastAttemptAt: new Date().toISOString(),
           lastError: ''
@@ -1753,8 +1810,47 @@ function Expenses({ data, reload, setToast, isOnline }) {
 
         try {
           validateOfflineExpenseDraft(data, draft.payload);
-          await api('/expenses', { method: 'POST', body: JSON.stringify(draft.payload) });
+          let latestDraft = readOfflineExpenseDrafts().find((item) => item.id === draft.id) || draft;
+          const syncPayload = { ...latestDraft.payload, receipt: latestDraft.payload?.receipt || latestDraft.uploadedReceipt || null };
+
+          if (latestDraft.offlineReceipt && !syncPayload.receipt) {
+            const offlineReceiptRecord = await readOfflineReceiptFile(latestDraft.id);
+            if (!offlineReceiptRecord?.file) {
+              throw new Error('The offline receipt file is missing from this device. Keep the draft, reattach the receipt, and try again.');
+            }
+
+            validateReceiptFile({
+              type: offlineReceiptRecord.contentType,
+              size: offlineReceiptRecord.sizeBytes,
+              name: offlineReceiptRecord.fileName
+            });
+
+            const base64 = await fileToBase64(offlineReceiptRecord.file);
+            const uploadedReceipt = await api('/receipts/upload', {
+              method: 'POST',
+              body: JSON.stringify({
+                fileName: offlineReceiptRecord.fileName,
+                contentType: offlineReceiptRecord.contentType,
+                base64
+              })
+            });
+
+            syncPayload.receipt = uploadedReceipt;
+            allDrafts = readOfflineExpenseDrafts().map((item) => item.id === latestDraft.id ? {
+              ...item,
+              uploadedReceipt,
+              receiptStatus: 'uploaded',
+              payload: { ...item.payload, receipt: uploadedReceipt }
+            } : item);
+            saveOfflineExpenseDrafts(allDrafts);
+            refreshOfflineDrafts();
+            latestDraft = allDrafts.find((item) => item.id === draft.id) || { ...latestDraft, uploadedReceipt };
+          }
+
+          validateOfflineExpenseDraft(data, syncPayload);
+          await api('/expenses', { method: 'POST', body: JSON.stringify(syncPayload) });
           synced += 1;
+          await deleteOfflineReceiptFile(draft.id).catch(() => null);
           allDrafts = readOfflineExpenseDrafts().filter((item) => item.id !== draft.id);
           saveOfflineExpenseDrafts(allDrafts);
           refreshOfflineDrafts();
@@ -1763,6 +1859,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
           allDrafts = readOfflineExpenseDrafts().map((item) => item.id === draft.id ? {
             ...item,
             status: 'failed',
+            receiptStatus: item.uploadedReceipt ? 'uploaded' : (item.offlineReceipt ? 'failed' : item.receiptStatus),
             lastError: err.message || 'Sync failed.'
           } : item);
           saveOfflineExpenseDrafts(allDrafts);
@@ -1780,8 +1877,9 @@ function Expenses({ data, reload, setToast, isOnline }) {
     }
   }
 
-  function deleteOfflineDraft(id) {
+  async function deleteOfflineDraft(id) {
     if (!window.confirm('Delete this offline draft from this device?')) return;
+    await deleteOfflineReceiptFile(id).catch(() => null);
     const nextDrafts = readOfflineExpenseDrafts().filter((draft) => draft.id !== id);
     saveOfflineExpenseDrafts(nextDrafts);
     refreshOfflineDrafts();
@@ -1797,7 +1895,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
         if (editingExpenseId) {
           throw new Error('Offline editing is blocked. Create a new offline draft or reconnect before changing existing expenses.');
         }
-        saveOfflineDraft(payload);
+        await saveOfflineDraft(payload, form.offlineReceiptFile, form.offlineReceiptInfo);
         return;
       }
 
@@ -1848,7 +1946,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
   return (
     <div className="space-y-6">
       <Section title={editingExpenseId ? 'Edit expense' : 'Record an expense'} icon={Receipt} action={editingExpenseId && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
-        {!isOnline && <div className="mb-4 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-900 ring-1 ring-amber-200">Offline mode: new expenses are saved as local drafts and will sync after reconnecting. Existing expense edits and receipt uploads wait for the server, because reality insists.</div>}
+        {!isOnline && <div className="mb-4 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-900 ring-1 ring-amber-200">Offline mode: new expenses and receipt files are saved as local drafts and will sync after reconnecting. Existing expense edits still wait for the server, because reality insists.</div>}
         <form onSubmit={saveExpense} className="grid gap-4 lg:grid-cols-3">
           <label className="field-label">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
           <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
@@ -1861,8 +1959,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
           <div className="field-label">
             Receipt upload
             <label className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:border-slate-500">
-              <UploadCloud size={16} /> {receiptBusy ? 'Uploading receipt...' : isOnline ? 'Upload JPG, PNG, WebP, or PDF' : 'Receipt upload paused offline'}
-              <input className="hidden" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={uploadReceipt} disabled={!isOnline || receiptBusy || busy} />
+              <UploadCloud size={16} /> {receiptBusy ? 'Uploading receipt...' : isOnline ? 'Upload JPG, PNG, WebP, or PDF' : 'Attach receipt for offline sync'}
+              <input className="hidden" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={uploadReceipt} disabled={receiptBusy || busy || (!isOnline && Boolean(editingExpenseId))} />
             </label>
             {form.receipt && (
               <div className="mt-2 rounded-2xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
@@ -1873,6 +1971,15 @@ function Expenses({ data, reload, setToast, isOnline }) {
                     <button className="btn-ghost text-rose-700" type="button" onClick={clearReceipt}><X size={14} /> Remove</button>
                   </div>
                 </div>
+              </div>
+            )}
+            {form.offlineReceiptInfo && !form.receipt && (
+              <div className="mt-2 rounded-2xl bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold">Queued offline: {form.offlineReceiptInfo.fileName} · {formatBytes(form.offlineReceiptInfo.sizeBytes)}</span>
+                  <button className="btn-ghost text-rose-700" type="button" onClick={clearReceipt}><X size={14} /> Remove</button>
+                </div>
+                <p className="mt-1">This receipt will be stored in this browser and uploaded before the expense syncs.</p>
               </div>
             )}
           </div>
@@ -1905,7 +2012,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
       <Section title="Offline expense drafts" icon={Smartphone} action={offlineDrafts.length > 0 && <button className="btn-ghost" type="button" onClick={() => syncOfflineDrafts()} disabled={!isOnline || syncingDrafts}>{syncingDrafts ? <RefreshCw size={15} /> : <UploadCloud size={15} />} Sync now</button>}>
         <div className="mb-4 rounded-3xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200">
           <p className="font-bold text-slate-900">{offlineDrafts.length} draft{offlineDrafts.length === 1 ? '' : 's'} waiting for this outing.</p>
-          <p className="mt-1">When you are offline, new expenses are saved only on this device. They sync automatically after reconnecting, but receipt files still need to be attached after the expense reaches the server.</p>
+          <p className="mt-1">When you are offline, new expenses and optional receipt files are saved only on this device. Receipts are stored in IndexedDB and upload first during sync.</p>
         </div>
         {offlineDrafts.length === 0 ? (
           <EmptyState title="No offline drafts" body="Go offline, record an expense, and the app will queue it here instead of pretending the server heard you." />
@@ -1923,6 +2030,13 @@ function Expenses({ data, reload, setToast, isOnline }) {
                         <span className={draftStatusBadge(draft.status)}>{draft.status || 'waiting'}</span>
                       </div>
                       <p className="mt-1 text-sm text-slate-600">{money(draft.payload?.amount || 0, currency)} · {category} · Paid by {paidBy}</p>
+                      {(draft.offlineReceipt || draft.uploadedReceipt || draft.payload?.receipt) && (
+                        <p className="mt-1 text-xs font-semibold text-slate-600">
+                          Receipt: {(draft.payload?.receipt || draft.uploadedReceipt || draft.offlineReceipt)?.fileName || 'Attached receipt'}
+                          {draft.offlineReceipt?.sizeBytes ? ` · ${formatBytes(draft.offlineReceipt.sizeBytes)}` : ''}
+                          {draft.receiptStatus ? ` · ${draft.receiptStatus}` : ''}
+                        </p>
+                      )}
                       <p className="mt-1 text-xs text-slate-500">Created {new Date(draft.createdAt).toLocaleString()} · Attempts: {draft.attempts || 0}{draft.lastAttemptAt ? ` · Last tried ${new Date(draft.lastAttemptAt).toLocaleString()}` : ''}</p>
                       {draft.lastError && <p className="mt-2 rounded-2xl bg-rose-50 p-3 text-xs font-semibold text-rose-700 ring-1 ring-rose-100">{draft.lastError}</p>}
                     </div>
