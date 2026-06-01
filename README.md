@@ -355,3 +355,8 @@ Theme selection is stored locally in the user's browser with `localStorage`; it 
 ### Analytics Theme Colors Hotfix
 
 The Analytics dashboard now follows the active website theme. Chart fills, pie slices, progress bars, axis labels, grid lines, legends, and tooltip styling update when the user switches themes from the top header. This is a frontend-only UI hotfix and does not require backend routes, database changes, or new environment variables.
+
+
+### Chart Budget vs Actual Differentiator Hotfix
+
+Dashboard and Analytics category charts now make budget and actual bars easier to distinguish. Estimated budget bars use a theme-aware diagonal stripe pattern with an outline, while actual spend bars use a solid theme color. The Dashboard category chart also follows the active theme for axis, grid, legend, and tooltip styling. This is a frontend-only UI hotfix and does not require backend routes, database changes, or new environment variables.

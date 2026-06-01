@@ -1132,11 +1132,14 @@ function NoAssignedDashboard({ data }) {
   );
 }
 
-function Dashboard({ data }) {
+function Dashboard({ data, activeTheme }) {
   if (data.noAssignedEvent) return <NoAssignedDashboard data={data} />;
 
   const { dashboard, event } = data;
   const currency = event.currency;
+  const chartTheme = useMemo(() => buildChartTheme(activeTheme), [activeTheme]);
+  const axisProps = useMemo(() => themedAxisProps(chartTheme), [chartTheme]);
+  const tooltipProps = useMemo(() => themedTooltipProps(chartTheme), [chartTheme]);
 
   return (
     <div className="space-y-6">
@@ -1159,13 +1162,19 @@ function Dashboard({ data }) {
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dashboard.categorySpending}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip formatter={(value) => money(value, currency)} />
-                <Legend />
-                <Bar dataKey="estimatedCost" name="Estimated" radius={[8, 8, 0, 0]} />
-                <Bar dataKey="actualCost" name="Actual" radius={[8, 8, 0, 0]} />
+                <defs>
+                  <pattern id="dashboardEstimatedPattern" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                    <rect width="8" height="8" fill={chartTheme.primary} opacity="0.18" />
+                    <rect width="3" height="8" fill={chartTheme.primary} opacity="0.55" />
+                  </pattern>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                <XAxis dataKey="name" {...axisProps} />
+                <YAxis {...axisProps} />
+                <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
+                <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
+                <Bar dataKey="estimatedCost" name="Estimated budget" radius={[8, 8, 0, 0]} fill="url(#dashboardEstimatedPattern)" stroke={chartTheme.primary} strokeWidth={2} />
+                <Bar dataKey="actualCost" name="Actual spend" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} stroke={chartTheme.secondary} strokeWidth={1} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1368,8 +1377,14 @@ function AnalyticsDashboard({ data, activeTheme }) {
                   <YAxis {...axisProps} />
                   <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
                   <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
-                  <Bar dataKey="Estimated" radius={[8, 8, 0, 0]} fill={chartTheme.primary} />
-                  <Bar dataKey="Actual" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} />
+                  <defs>
+                    <pattern id="analyticsEstimatedPattern" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                      <rect width="8" height="8" fill={chartTheme.primary} opacity="0.18" />
+                      <rect width="3" height="8" fill={chartTheme.primary} opacity="0.55" />
+                    </pattern>
+                  </defs>
+                  <Bar dataKey="Estimated" name="Estimated budget" radius={[8, 8, 0, 0]} fill="url(#analyticsEstimatedPattern)" stroke={chartTheme.primary} strokeWidth={2} />
+                  <Bar dataKey="Actual" name="Actual spend" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} stroke={chartTheme.secondary} strokeWidth={1} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -4068,7 +4083,7 @@ function AppShell() {
       {error && <div className="mx-auto mt-4 max-w-7xl px-4 sm:px-6 lg:px-8"><div className="rounded-2xl bg-rose-50 p-4 text-rose-800 ring-1 ring-rose-200">{error}</div></div>}
 
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        {activeTab === 'dashboard' && <Dashboard data={data} />}
+        {activeTab === 'dashboard' && <Dashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'events' && canViewEvents && <EventsConsole data={data} reload={reload} setToast={setToast} onSwitchEvent={switchEvent} />}
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
         {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} canManageParticipants={canManageParticipants} />}
