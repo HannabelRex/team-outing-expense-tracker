@@ -3238,7 +3238,14 @@ function ThemePicker({ activeThemeKey, onThemeChange }) {
       </button>
 
       {open && (
-        <div className="app-theme-menu absolute right-0 z-40 mt-3 w-80 rounded-3xl p-4 shadow-soft ring-1" role="menu">
+        <>
+          <button
+            className="app-theme-backdrop"
+            type="button"
+            aria-label="Close theme picker"
+            onClick={() => setOpen(false)}
+          />
+          <div className="app-theme-menu absolute right-0 z-40 mt-3 w-80 rounded-3xl p-4 shadow-soft ring-1" role="menu">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Theme palette</p>
@@ -3276,7 +3283,8 @@ function ThemePicker({ activeThemeKey, onThemeChange }) {
               );
             })}
           </div>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

@@ -500,3 +500,8 @@ The login screen now uses clearer visual hierarchy for the top heading, field la
 - Login card now uses a brighter frosted surface.
 - Sign in/Create account headings, Email/Password labels, Forgot password, and account-switch links are now more readable.
 - No backend or environment variable changes are required.
+
+
+### Theme picker mobile center hotfix
+
+The **Themes** menu now opens as a centered mobile modal with a soft backdrop, viewport-safe width, and internal scrolling so users can view and select themes without the panel moving outside the mobile screen. Desktop dropdown behavior remains unchanged.

@@ -168,6 +168,40 @@
     border-radius: 9999px;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62), 0 8px 20px rgba(15, 23, 42, 0.18);
   }
+
+
+  .theme-shell .app-theme-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    display: none;
+    background: transparent;
+    border: 0;
+    padding: 0;
+  }
+
+  @media (max-width: 640px) {
+    .theme-shell .app-theme-backdrop {
+      display: block;
+      background: rgba(2, 6, 23, 0.46);
+      backdrop-filter: blur(8px);
+    }
+
+    .theme-shell .app-theme-menu {
+      position: fixed !important;
+      left: 50% !important;
+      right: auto !important;
+      top: 50% !important;
+      z-index: 45 !important;
+      margin-top: 0 !important;
+      width: min(calc(100vw - 2rem), 24rem) !important;
+      max-height: min(82vh, 36rem);
+      overflow-y: auto;
+      transform: translate(-50%, -50%);
+      border-radius: 1.5rem;
+      padding: 1rem;
+    }
+  }
 }
 
 @layer components {
