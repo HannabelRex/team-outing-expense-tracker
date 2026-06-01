@@ -488,3 +488,8 @@ The login screen was redesigned for clearer wording and better mobile usability.
 - Existing auth flows remain unchanged.
 
 See `docs/login-workspace-access-redesign-hotfix.md` for details.
+
+## Login Font Contrast Hotfix
+
+The login screen now uses clearer visual hierarchy for the top heading, field labels, Forgot password link, and New user/Create account action. The update improves readability on the glassmorphism card while keeping the existing workspace-access login layout.
+

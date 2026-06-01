@@ -231,6 +231,48 @@
     animation-delay: 120ms;
   }
 
+  .auth-kicker {
+    color: #0369a1;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.62);
+  }
+
+  .auth-title-gradient {
+    color: #0f172a;
+    background: linear-gradient(135deg, #0f172a 0%, #2563eb 48%, #059669 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .auth-field-label {
+    color: #075985;
+    letter-spacing: 0.01em;
+  }
+
+  .auth-text-link {
+    color: #2563eb;
+    text-decoration: underline;
+    text-decoration-color: rgba(37, 99, 235, 0.28);
+    text-underline-offset: 4px;
+  }
+
+  .auth-text-link:hover {
+    color: #0f766e;
+    text-decoration-color: rgba(15, 118, 110, 0.4);
+  }
+
+  .auth-account-switch {
+    color: #1d4ed8;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(16, 185, 129, 0.1));
+    border: 1px solid rgba(37, 99, 235, 0.16);
+  }
+
+  .auth-account-switch:hover {
+    color: #065f46;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.16), rgba(16, 185, 129, 0.18));
+    border-color: rgba(16, 185, 129, 0.26);
+  }
+
   .auth-form-wrap {
     position: relative;
     z-index: 18;

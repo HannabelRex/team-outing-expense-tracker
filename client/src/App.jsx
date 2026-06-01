@@ -982,8 +982,8 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
             <div className="mb-6 flex items-start gap-4">
               <div className="auth-lock-badge rounded-3xl p-3 text-white shadow-lg"><LockKeyhole size={24} /></div>
               <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Team Outing Expense Tracker</p>
-                <h1 className="mt-1 text-3xl font-black text-slate-950">{title}</h1>
+                <p className="auth-kicker text-xs font-black uppercase tracking-[0.22em]">Team Outing Expense Tracker</p>
+                <h1 className="auth-title-gradient mt-1 text-3xl font-black">{title}</h1>
                 <p className="mt-2 text-sm font-bold leading-6 text-slate-600">{modeDescription}</p>
               </div>
             </div>
@@ -994,22 +994,22 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
 
             <form onSubmit={submit} className="space-y-4">
               {mode === 'signup' && (
-                <label className="field-label">Name
+                <label className="field-label auth-field-label">Name
                   <input className="input auth-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Your name" />
                 </label>
               )}
               {mode !== 'reset' && (
-                <label className="field-label">Email
+                <label className="field-label auth-field-label">Email
                   <input className="input auth-input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="you@example.com" required />
                 </label>
               )}
               {mode !== 'forgot' && (
-                <label className="field-label">{mode === 'reset' ? 'New password' : 'Password'}
+                <label className="field-label auth-field-label">{mode === 'reset' ? 'New password' : 'Password'}
                   <input className="input auth-input" type="password" minLength="6" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Minimum 6 characters" required />
                 </label>
               )}
               {mode === 'reset' && (
-                <label className="field-label">Confirm new password
+                <label className="field-label auth-field-label">Confirm new password
                   <input className="input auth-input" type="password" minLength="6" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} placeholder="Re-enter password" required />
                 </label>
               )}
@@ -1022,14 +1022,14 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
             </form>
 
             {mode === 'login' && (
-              <button className="mt-4 w-full text-sm font-black text-slate-600 transition hover:text-slate-950" type="button" onClick={() => { setMode('forgot'); setMessage(''); }}>
+              <button className="auth-text-link mt-4 w-full text-sm font-black transition" type="button" onClick={() => { setMode('forgot'); setMessage(''); }}>
                 Forgot password?
               </button>
             )}
 
             {mode !== 'reset' && (
               <button
-                className="mt-3 w-full rounded-2xl bg-slate-950/5 px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-950/10 hover:text-slate-950"
+                className="auth-account-switch mt-3 w-full rounded-2xl px-4 py-3 text-sm font-black transition"
                 type="button"
                 onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage(''); }}
               >
@@ -1038,7 +1038,7 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
             )}
 
             {(mode === 'forgot' || mode === 'reset') && (
-              <button className="mt-3 w-full text-sm font-black text-slate-600 transition hover:text-slate-950" type="button" onClick={() => { setMode('login'); setMessage(''); }}>
+              <button className="auth-text-link mt-3 w-full text-sm font-black transition" type="button" onClick={() => { setMode('login'); setMessage(''); }}>
                 Back to sign in
               </button>
             )}
