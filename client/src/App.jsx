@@ -51,6 +51,7 @@ const SESSION_TIMEOUT_MINUTES = Math.max(1, Number(import.meta.env.VITE_SESSION_
 const SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MINUTES * 60 * 1000;
 const BOOTSTRAP_CACHE_KEY = 'team-outing-bootstrap-cache-v1';
 const LAST_SYNCED_AT_KEY = 'team-outing-last-synced-at-v1';
+const OFFLINE_EXPENSE_DRAFTS_KEY = 'team-outing-offline-expense-drafts-v1';
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -256,6 +257,97 @@ function formatSyncTime(value) {
 function isWriteRequest(options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   return !['GET', 'HEAD'].includes(method);
+}
+
+function readOfflineExpenseDrafts() {
+  try {
+    const raw = window.localStorage.getItem(OFFLINE_EXPENSE_DRAFTS_KEY);
+    if (!raw) return [];
+    const drafts = JSON.parse(raw);
+    return Array.isArray(drafts) ? drafts : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOfflineExpenseDrafts(drafts) {
+  try {
+    window.localStorage.setItem(OFFLINE_EXPENSE_DRAFTS_KEY, JSON.stringify(Array.isArray(drafts) ? drafts : []));
+  } catch {
+    throw new Error('Could not save the offline draft in this browser. Local storage refused to cooperate, very majestic of it.');
+  }
+}
+
+function normalizeEmail(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function participantMatchesCurrentUser(participant, user) {
+  const userEmail = normalizeEmail(user?.email);
+  if (!participant || !userEmail) return false;
+  return [participant.email, participant.loginEmail, participant.userEmail]
+    .some((email) => normalizeEmail(email) === userEmail);
+}
+
+function currentUserDraftKey(data) {
+  return data?.currentUser?.id || normalizeEmail(data?.currentUser?.email) || 'anonymous';
+}
+
+function offlineDraftBelongsToCurrentContext(draft, data) {
+  const currentUserKey = currentUserDraftKey(data);
+  const draftUserKey = draft.userId || normalizeEmail(draft.userEmail) || 'anonymous';
+  return draft.eventId === data?.activeEventId && draftUserKey === currentUserKey;
+}
+
+function eventOfflineExpenseDrafts(data) {
+  return readOfflineExpenseDrafts().filter((draft) => offlineDraftBelongsToCurrentContext(draft, data));
+}
+
+function validateOfflineExpenseDraft(data, payload) {
+  if (!payload.title?.trim()) throw new Error('Expense title is required before saving an offline draft. Apparently even chaos needs a label.');
+  if (!Number.isFinite(Number(payload.amount)) || Number(payload.amount) <= 0) throw new Error('Expense amount must be greater than zero. Free expenses are called happiness, not accounting.');
+  if (!payload.categoryId || !data.categories.some((category) => category.id === payload.categoryId)) throw new Error('Pick a valid category before saving this offline draft.');
+  if (!payload.paidByParticipantId || !data.participants.some((participant) => participant.id === payload.paidByParticipantId)) throw new Error('Pick a valid paid-by participant before saving this offline draft.');
+  if (!Array.isArray(payload.participantIds) || payload.participantIds.length === 0) throw new Error('Select at least one participant involved in the expense.');
+  const participantIds = new Set(data.participants.map((participant) => participant.id));
+  const missingParticipant = payload.participantIds.find((participantId) => !participantIds.has(participantId));
+  if (missingParticipant) throw new Error('One selected participant is no longer valid. Refresh when online before syncing.');
+  if (payload.receipt) throw new Error('Offline drafts do not support receipt files yet. Save the expense offline first, then attach the receipt after syncing. Tiny limitation, major honesty.');
+
+  if (data.currentUser?.role === 'member') {
+    const paidByParticipant = data.participants.find((participant) => participant.id === payload.paidByParticipantId);
+    if (!participantMatchesCurrentUser(paidByParticipant, data.currentUser)) {
+      throw new Error('Members can only save offline drafts paid by their own participant profile. Match the participant email with your login email.');
+    }
+  }
+}
+
+function buildOfflineExpenseDraft(data, payload) {
+  validateOfflineExpenseDraft(data, payload);
+  const now = new Date().toISOString();
+  return {
+    id: `offline-expense-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    createdAt: now,
+    updatedAt: now,
+    lastAttemptAt: '',
+    status: 'waiting',
+    attempts: 0,
+    lastError: '',
+    eventId: data.activeEventId,
+    eventName: data.event?.name || 'Current outing',
+    userId: data.currentUser?.id || '',
+    userEmail: data.currentUser?.email || '',
+    payload: {
+      ...payload,
+      receipt: null
+    }
+  };
+}
+
+function draftStatusBadge(status = 'waiting') {
+  if (status === 'syncing') return 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-blue-50 text-blue-700 ring-blue-200';
+  if (status === 'failed') return 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-rose-50 text-rose-700 ring-rose-200';
+  return 'inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 bg-amber-50 text-amber-700 ring-amber-200';
 }
 
 
@@ -1509,12 +1601,14 @@ function BudgetPlanning({ data, reload, setToast, canManageBudget }) {
   );
 }
 
-function Expenses({ data, reload, setToast }) {
+function Expenses({ data, reload, setToast, isOnline }) {
   const [form, setForm] = useState(() => buildDefaultExpenseForm(data));
   const [editingExpenseId, setEditingExpenseId] = useState('');
   const [filters, setFilters] = useState({ query: '', categoryId: '', paidByParticipantId: '', approvalStatus: '', fromDate: '', toDate: '' });
   const [busy, setBusy] = useState(false);
   const [receiptBusy, setReceiptBusy] = useState(false);
+  const [offlineDrafts, setOfflineDrafts] = useState(() => eventOfflineExpenseDrafts(data));
+  const [syncingDrafts, setSyncingDrafts] = useState(false);
   const currency = data.event.currency;
 
   const expenseRows = useMemo(() => {
@@ -1539,6 +1633,20 @@ function Expenses({ data, reload, setToast }) {
     });
   }, [expenseRows, filters]);
 
+  useEffect(() => {
+    setOfflineDrafts(eventOfflineExpenseDrafts(data));
+  }, [data.activeEventId, data.currentUser?.id, data.currentUser?.email]);
+
+  useEffect(() => {
+    if (isOnline && eventOfflineExpenseDrafts(data).some((draft) => draft.status !== 'syncing')) {
+      syncOfflineDrafts({ automatic: true });
+    }
+  }, [isOnline, data.activeEventId]);
+
+  function refreshOfflineDrafts() {
+    setOfflineDrafts(eventOfflineExpenseDrafts(data));
+  }
+
   function resetForm() {
     setEditingExpenseId('');
     setForm(buildDefaultExpenseForm(data));
@@ -1554,6 +1662,12 @@ function Expenses({ data, reload, setToast }) {
   async function uploadReceipt(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!isOnline) {
+      setToast('Receipt upload needs the server. Save an offline expense draft now and attach the receipt after sync.');
+      event.target.value = '';
+      return;
+    }
 
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
     if (!allowedTypes.includes(file.type)) {
@@ -1596,11 +1710,97 @@ function Expenses({ data, reload, setToast }) {
     setForm({ ...form, participantIds: next });
   }
 
+  function saveOfflineDraft(payload) {
+    const draft = buildOfflineExpenseDraft(data, payload);
+    const allDrafts = readOfflineExpenseDrafts();
+    const nextDrafts = [...allDrafts, draft];
+    saveOfflineExpenseDrafts(nextDrafts);
+    refreshOfflineDrafts();
+    resetForm();
+    setToast('Offline expense draft saved on this device. It will sync when the internet behaves again.');
+  }
+
+  async function syncOfflineDrafts({ automatic = false } = {}) {
+    if (syncingDrafts) return;
+    if (!browserIsOnline()) {
+      setToast('Still offline. The draft queue is waiting, with more patience than most software deserves.');
+      return;
+    }
+
+    const pendingDrafts = eventOfflineExpenseDrafts(data).filter((draft) => draft.status !== 'syncing');
+    if (pendingDrafts.length === 0) {
+      if (!automatic) setToast('No offline expense drafts waiting to sync. Suspiciously tidy.');
+      refreshOfflineDrafts();
+      return;
+    }
+
+    setSyncingDrafts(true);
+    let synced = 0;
+    let failed = 0;
+
+    try {
+      for (const draft of pendingDrafts) {
+        let allDrafts = readOfflineExpenseDrafts();
+        allDrafts = allDrafts.map((item) => item.id === draft.id ? {
+          ...item,
+          status: 'syncing',
+          attempts: Number(item.attempts || 0) + 1,
+          lastAttemptAt: new Date().toISOString(),
+          lastError: ''
+        } : item);
+        saveOfflineExpenseDrafts(allDrafts);
+        refreshOfflineDrafts();
+
+        try {
+          validateOfflineExpenseDraft(data, draft.payload);
+          await api('/expenses', { method: 'POST', body: JSON.stringify(draft.payload) });
+          synced += 1;
+          allDrafts = readOfflineExpenseDrafts().filter((item) => item.id !== draft.id);
+          saveOfflineExpenseDrafts(allDrafts);
+          refreshOfflineDrafts();
+        } catch (err) {
+          failed += 1;
+          allDrafts = readOfflineExpenseDrafts().map((item) => item.id === draft.id ? {
+            ...item,
+            status: 'failed',
+            lastError: err.message || 'Sync failed.'
+          } : item);
+          saveOfflineExpenseDrafts(allDrafts);
+          refreshOfflineDrafts();
+        }
+      }
+
+      if (synced > 0) await reload();
+      if (synced && failed) setToast(`${synced} offline draft${synced === 1 ? '' : 's'} synced. ${failed} still need attention.`);
+      else if (synced) setToast(`${synced} offline draft${synced === 1 ? '' : 's'} synced successfully. The queue has been appeased.`);
+      else if (failed && !automatic) setToast(`${failed} offline draft${failed === 1 ? '' : 's'} could not sync. Check the draft errors.`);
+    } finally {
+      setSyncingDrafts(false);
+      refreshOfflineDrafts();
+    }
+  }
+
+  function deleteOfflineDraft(id) {
+    if (!window.confirm('Delete this offline draft from this device?')) return;
+    const nextDrafts = readOfflineExpenseDrafts().filter((draft) => draft.id !== id);
+    saveOfflineExpenseDrafts(nextDrafts);
+    refreshOfflineDrafts();
+    setToast('Offline draft deleted from this device. Local chaos reduced.');
+  }
+
   async function saveExpense(event) {
     event.preventDefault();
     setBusy(true);
     try {
       const payload = buildExpensePayload(form);
+      if (!isOnline) {
+        if (editingExpenseId) {
+          throw new Error('Offline editing is blocked. Create a new offline draft or reconnect before changing existing expenses.');
+        }
+        saveOfflineDraft(payload);
+        return;
+      }
+
       if (editingExpenseId) {
         await api(`/expenses/${editingExpenseId}`, { method: 'PUT', body: JSON.stringify({ ...payload, confirmSettledEdit: true }) });
         setToast('Expense updated and balances recalculated. The math goblin has revised its prophecy.');
@@ -1648,6 +1848,7 @@ function Expenses({ data, reload, setToast }) {
   return (
     <div className="space-y-6">
       <Section title={editingExpenseId ? 'Edit expense' : 'Record an expense'} icon={Receipt} action={editingExpenseId && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
+        {!isOnline && <div className="mb-4 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-900 ring-1 ring-amber-200">Offline mode: new expenses are saved as local drafts and will sync after reconnecting. Existing expense edits and receipt uploads wait for the server, because reality insists.</div>}
         <form onSubmit={saveExpense} className="grid gap-4 lg:grid-cols-3">
           <label className="field-label">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
           <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
@@ -1660,8 +1861,8 @@ function Expenses({ data, reload, setToast }) {
           <div className="field-label">
             Receipt upload
             <label className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:border-slate-500">
-              <UploadCloud size={16} /> {receiptBusy ? 'Uploading receipt...' : 'Upload JPG, PNG, WebP, or PDF'}
-              <input className="hidden" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={uploadReceipt} disabled={receiptBusy || busy} />
+              <UploadCloud size={16} /> {receiptBusy ? 'Uploading receipt...' : isOnline ? 'Upload JPG, PNG, WebP, or PDF' : 'Receipt upload paused offline'}
+              <input className="hidden" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" onChange={uploadReceipt} disabled={!isOnline || receiptBusy || busy} />
             </label>
             {form.receipt && (
               <div className="mt-2 rounded-2xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
@@ -1697,8 +1898,44 @@ function Expenses({ data, reload, setToast }) {
 
           <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.isRecurring} onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })} /> Recurring/shared expense</label>
-          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
+          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {!isOnline && !editingExpenseId ? 'Save offline draft' : editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
         </form>
+      </Section>
+
+      <Section title="Offline expense drafts" icon={Smartphone} action={offlineDrafts.length > 0 && <button className="btn-ghost" type="button" onClick={() => syncOfflineDrafts()} disabled={!isOnline || syncingDrafts}>{syncingDrafts ? <RefreshCw size={15} /> : <UploadCloud size={15} />} Sync now</button>}>
+        <div className="mb-4 rounded-3xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200">
+          <p className="font-bold text-slate-900">{offlineDrafts.length} draft{offlineDrafts.length === 1 ? '' : 's'} waiting for this outing.</p>
+          <p className="mt-1">When you are offline, new expenses are saved only on this device. They sync automatically after reconnecting, but receipt files still need to be attached after the expense reaches the server.</p>
+        </div>
+        {offlineDrafts.length === 0 ? (
+          <EmptyState title="No offline drafts" body="Go offline, record an expense, and the app will queue it here instead of pretending the server heard you." />
+        ) : (
+          <div className="space-y-3">
+            {offlineDrafts.map((draft) => {
+              const paidBy = data.participants.find((participant) => participant.id === draft.payload?.paidByParticipantId)?.name || 'Unknown participant';
+              const category = data.categories.find((item) => item.id === draft.payload?.categoryId)?.name || 'Unknown category';
+              return (
+                <div key={draft.id} className="rounded-3xl bg-white p-4 ring-1 ring-slate-200">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-black text-slate-950">{draft.payload?.title || 'Untitled expense'}</p>
+                        <span className={draftStatusBadge(draft.status)}>{draft.status || 'waiting'}</span>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">{money(draft.payload?.amount || 0, currency)} · {category} · Paid by {paidBy}</p>
+                      <p className="mt-1 text-xs text-slate-500">Created {new Date(draft.createdAt).toLocaleString()} · Attempts: {draft.attempts || 0}{draft.lastAttemptAt ? ` · Last tried ${new Date(draft.lastAttemptAt).toLocaleString()}` : ''}</p>
+                      {draft.lastError && <p className="mt-2 rounded-2xl bg-rose-50 p-3 text-xs font-semibold text-rose-700 ring-1 ring-rose-100">{draft.lastError}</p>}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn-ghost" type="button" onClick={() => syncOfflineDrafts()} disabled={!isOnline || syncingDrafts}><UploadCloud size={15} /> Sync</button>
+                      <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteOfflineDraft(draft.id)} disabled={syncingDrafts}><Trash2 size={15} /> Delete</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Section>
 
       <Section title="Expense list" icon={Filter}>
@@ -2932,7 +3169,7 @@ function AppShell() {
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
         {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} canManageParticipants={canManageParticipants} />}
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />}
-        {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
         {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} />}
