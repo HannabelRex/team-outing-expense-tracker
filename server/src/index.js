@@ -19,6 +19,11 @@ const PORT = process.env.PORT || 4000;
 const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, '');
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'receipts';
+const AUTO_BACKUP_ENABLED = String(process.env.AUTO_BACKUP_ENABLED || 'false').toLowerCase() === 'true';
+const AUTO_BACKUP_BUCKET = process.env.AUTO_BACKUP_BUCKET || 'app-backups';
+const AUTO_BACKUP_PATH = process.env.AUTO_BACKUP_PATH || 'daily/latest-backup.json';
+const AUTO_BACKUP_MAX_BYTES = Number(process.env.AUTO_BACKUP_MAX_BYTES || 10 * 1024 * 1024);
+const BACKUP_CRON_SECRET = process.env.BACKUP_CRON_SECRET || '';
 const MAX_RECEIPT_BYTES = Number(process.env.MAX_RECEIPT_BYTES || 4 * 1024 * 1024);
 const AUTH_REQUIRED = String(process.env.AUTH_REQUIRED || 'false').toLowerCase() === 'true';
 const SUPABASE_AUTH_API_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || SUPABASE_SERVICE_ROLE_KEY;
@@ -822,6 +827,187 @@ function buildEventBackup(eventRecord, currentUser) {
   };
 }
 
+
+function autoBackupSystemUser(triggeredBy = 'system') {
+  return {
+    id: 'system-auto-backup',
+    name: triggeredBy === 'admin-manual' ? 'Admin Auto Backup' : 'Daily Auto Backup',
+    email: '',
+    role: 'system'
+  };
+}
+
+function requireAutoBackupConfig() {
+  if (!AUTO_BACKUP_ENABLED) {
+    const error = new Error('Automatic backup is disabled. Set AUTO_BACKUP_ENABLED=true in Render. Even robots need permission slips.');
+    error.statusCode = 503;
+    throw error;
+  }
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    const error = new Error('Automatic backup storage is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Render.');
+    error.statusCode = 503;
+    throw error;
+  }
+  if (!AUTO_BACKUP_BUCKET || !AUTO_BACKUP_PATH) {
+    const error = new Error('Automatic backup bucket/path is not configured. Add AUTO_BACKUP_BUCKET and AUTO_BACKUP_PATH in Render.');
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
+function requireBackupCronSecret(providedSecret = '') {
+  if (!BACKUP_CRON_SECRET) {
+    const error = new Error('BACKUP_CRON_SECRET is not configured. The cron endpoint refuses to run naked on the internet, which is refreshingly sensible.');
+    error.statusCode = 503;
+    throw error;
+  }
+  if (String(providedSecret || '') !== BACKUP_CRON_SECRET) {
+    const error = new Error('Invalid backup cron secret.');
+    error.statusCode = 401;
+    throw error;
+  }
+}
+
+async function uploadJsonBackupToSupabaseStorage({ bucket, storagePath, payload }) {
+  requireAutoBackupConfig();
+  const json = JSON.stringify(payload, null, 2);
+  const buffer = Buffer.from(json, 'utf8');
+  if (buffer.byteLength > AUTO_BACKUP_MAX_BYTES) {
+    const error = new Error(`Automatic backup is too large. Maximum allowed size is ${Math.round(AUTO_BACKUP_MAX_BYTES / 1024 / 1024)} MB.`);
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const uploadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodedStoragePath(storagePath)}`;
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'x-upsert': 'true'
+    },
+    body: buffer
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(`Automatic backup upload failed. ${body || response.statusText}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    bucket,
+    storagePath,
+    sizeBytes: buffer.byteLength,
+    uploadedAt: new Date().toISOString(),
+    overwrite: true
+  };
+}
+
+async function downloadJsonBackupFromSupabaseStorage({ bucket, storagePath }) {
+  requireAutoBackupConfig();
+  const downloadUrl = `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodedStoragePath(storagePath)}`;
+  const response = await fetch(downloadUrl, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(`Latest automatic backup could not be downloaded. ${body || response.statusText}`);
+    error.statusCode = response.status === 404 ? 404 : 502;
+    throw error;
+  }
+
+  return response.text();
+}
+
+function latestBackupAudit(data = {}, action) {
+  normalizeMultiEventStore(data);
+  const entries = (data.events || [])
+    .flatMap((eventRecord) => (eventRecord.auditLog || []).filter((entry) => entry.action === action))
+    .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')));
+  return entries[0] || null;
+}
+
+function autoBackupStatusPayload(data = {}) {
+  const lastCompleted = latestBackupAudit(data, 'backup.auto_completed');
+  const lastFailed = latestBackupAudit(data, 'backup.auto_failed');
+  return {
+    enabled: AUTO_BACKUP_ENABLED,
+    configured: Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && AUTO_BACKUP_BUCKET && AUTO_BACKUP_PATH),
+    bucket: AUTO_BACKUP_BUCKET,
+    path: AUTO_BACKUP_PATH,
+    overwrite: true,
+    maxBytes: AUTO_BACKUP_MAX_BYTES,
+    cronSecretConfigured: Boolean(BACKUP_CRON_SECRET),
+    lastCompletedAt: lastCompleted?.createdAt || '',
+    lastCompletedDetails: lastCompleted?.details || null,
+    lastFailedAt: lastFailed?.createdAt || '',
+    lastFailedError: lastFailed?.details?.error || ''
+  };
+}
+
+async function performAutomaticBackup({ currentUser = null, trigger = 'render-cron' } = {}) {
+  requireAutoBackupConfig();
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const actor = currentUser || autoBackupSystemUser(trigger);
+  const eventRecord = currentEventForAudit(data, actor);
+
+  try {
+    const backup = buildFullBackup(data, actor);
+    backup.backupMode = 'automatic';
+    backup.autoBackup = {
+      trigger,
+      bucket: AUTO_BACKUP_BUCKET,
+      path: AUTO_BACKUP_PATH,
+      overwrite: true
+    };
+
+    const uploadResult = await uploadJsonBackupToSupabaseStorage({
+      bucket: AUTO_BACKUP_BUCKET,
+      storagePath: AUTO_BACKUP_PATH,
+      payload: backup
+    });
+
+    addAuditLog(eventRecord, actor, 'backup.auto_completed', 'backup', `Automatic backup completed to ${AUTO_BACKUP_BUCKET}/${AUTO_BACKUP_PATH}.`, {
+      trigger,
+      bucket: uploadResult.bucket,
+      path: uploadResult.storagePath,
+      sizeBytes: uploadResult.sizeBytes,
+      overwrite: true,
+      uploadedAt: uploadResult.uploadedAt
+    });
+    await writeStore(data);
+
+    return {
+      ok: true,
+      trigger,
+      bucket: uploadResult.bucket,
+      path: uploadResult.storagePath,
+      sizeBytes: uploadResult.sizeBytes,
+      uploadedAt: uploadResult.uploadedAt,
+      summary: appStateSummary(data)
+    };
+  } catch (error) {
+    addAuditLog(eventRecord, actor, 'backup.auto_failed', 'backup', 'Automatic backup failed.', {
+      trigger,
+      bucket: AUTO_BACKUP_BUCKET,
+      path: AUTO_BACKUP_PATH,
+      error: error.message
+    });
+    await writeStore(data).catch(() => null);
+    throw error;
+  }
+}
+
 function validateRestoreBackupPayload(backup) {
   if (!backup || typeof backup !== 'object') {
     const error = new Error('Upload a valid JSON backup file. The app cannot restore vibes.');
@@ -1021,9 +1207,18 @@ app.get('/api/health', (req, res) => {
     inviteAutoParticipantTagging: 'enabled',
     sessionTimeout: 'client-enforced',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured',
-    adminBackupRestore: 'enabled'
+    adminBackupRestore: 'enabled',
+    dailyAutoBackup: AUTO_BACKUP_ENABLED ? 'enabled' : 'disabled',
+    dailyAutoBackupStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? `${AUTO_BACKUP_BUCKET}/${AUTO_BACKUP_PATH}` : 'not-configured'
   });
 });
+
+app.post('/api/admin/backup/auto', asyncHandler(async (req, res) => {
+  const providedSecret = req.get('x-backup-cron-secret') || req.get('x-cron-secret') || req.query.secret || '';
+  requireBackupCronSecret(providedSecret);
+  const result = await performAutomaticBackup({ trigger: 'render-cron' });
+  res.status(201).json(result);
+}));
 
 app.use('/api', authMiddleware);
 
@@ -1041,6 +1236,46 @@ app.get('/api/admin/backup', asyncHandler(async (req, res) => {
   const backup = buildFullBackup(data, currentUser);
   await writeStore(data);
   sendJsonAttachment(res, `team-outing-full-backup-${backupFileStamp()}.json`, backup);
+}));
+
+app.get('/api/admin/backup/auto-status', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  res.json(autoBackupStatusPayload(data));
+}));
+
+app.post('/api/admin/backup/auto-run', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const result = await performAutomaticBackup({ currentUser, trigger: 'admin-manual' });
+  res.status(201).json(result);
+}));
+
+app.get('/api/admin/backup/latest', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+
+  const latestBackupText = await downloadJsonBackupFromSupabaseStorage({
+    bucket: AUTO_BACKUP_BUCKET,
+    storagePath: AUTO_BACKUP_PATH
+  });
+
+  const eventRecord = currentEventForAudit(data, currentUser);
+  addAuditLog(eventRecord, currentUser, 'backup.auto_downloaded', 'backup', 'Downloaded latest automatic backup from Supabase Storage.', {
+    bucket: AUTO_BACKUP_BUCKET,
+    path: AUTO_BACKUP_PATH
+  });
+  await writeStore(data);
+
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="team-outing-latest-auto-backup.json"');
+  res.send(latestBackupText);
 }));
 
 app.get('/api/admin/events/:eventId/export', asyncHandler(async (req, res) => {

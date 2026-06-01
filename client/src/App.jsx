@@ -2876,8 +2876,14 @@ function DataManagement({ data, reload, setToast }) {
   const [restoreBackup, setRestoreBackup] = useState(null);
   const [restoreSummary, setRestoreSummary] = useState(null);
   const [restoreConfirmation, setRestoreConfirmation] = useState('');
+  const [autoBackupStatus, setAutoBackupStatus] = useState(null);
+  const [autoBackupError, setAutoBackupError] = useState('');
   const activeEventName = data.event?.name || 'current outing';
   const activeEventId = data.activeEventId;
+  const autoBackupReady = Boolean(autoBackupStatus?.enabled && autoBackupStatus?.configured && autoBackupStatus?.cronSecretConfigured);
+  const autoBackupStorageLabel = autoBackupStatus?.bucket && autoBackupStatus?.path
+    ? `${autoBackupStatus.bucket}/${autoBackupStatus.path}`
+    : 'app-backups/daily/latest-backup.json';
 
   function backupSummaryFromPayload(payload) {
     if (!payload || typeof payload !== 'object') return null;
@@ -2893,6 +2899,20 @@ function DataManagement({ data, reload, setToast }) {
       totalAuditEntries: events.reduce((sum, eventRecord) => sum + (eventRecord.auditLog || []).length, 0)
     };
   }
+
+  async function loadAutoBackupStatus() {
+    try {
+      setAutoBackupError('');
+      const status = await api('/admin/backup/auto-status');
+      setAutoBackupStatus(status);
+    } catch (err) {
+      setAutoBackupError(err.message || 'Could not load automatic backup status.');
+    }
+  }
+
+  useEffect(() => {
+    loadAutoBackupStatus();
+  }, []);
 
   async function downloadFullBackup() {
     try {
@@ -2912,6 +2932,34 @@ function DataManagement({ data, reload, setToast }) {
       setBusy('event-export');
       await downloadApiFile(`/admin/events/${activeEventId}/export`, `${reportFileBaseName(activeEventName)}-event-export.json`);
       setToast('Current event export downloaded. One outing, bottled neatly as JSON.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function runAutoBackupNow() {
+    try {
+      setBusy('auto-backup');
+      const result = await api('/admin/backup/auto-run', { method: 'POST', body: JSON.stringify({}) });
+      setToast(`Automatic backup saved to ${result.bucket}/${result.path}.`);
+      await loadAutoBackupStatus();
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+      await loadAutoBackupStatus();
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function downloadLatestAutoBackup() {
+    try {
+      setBusy('download-auto-backup');
+      await downloadApiFile('/admin/backup/latest', 'team-outing-latest-auto-backup.json');
+      setToast('Latest automatic backup downloaded from Supabase Storage.');
       await reload();
     } catch (err) {
       showActionError(setToast, err);
@@ -3016,6 +3064,46 @@ function DataManagement({ data, reload, setToast }) {
               <p className="font-bold text-slate-900">Full backup includes</p>
               <p className="mt-2">Events, participants, categories, expenses, settlements, notifications, audit logs, users, roles, invitations, and app metadata. It does not include Render, Vercel, Gmail, or Supabase secret values.</p>
             </div>
+          </div>
+
+          <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-emerald-700 p-2 text-white"><RefreshCw size={18} /></div>
+              <div>
+                <h3 className="text-lg font-black text-emerald-950">Daily automatic backup</h3>
+                <p className="mt-1 text-sm text-emerald-800">Stores one private JSON backup in Supabase Storage and overwrites the previous file each run.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-2xl bg-white p-4 text-sm text-slate-700 ring-1 ring-emerald-100">
+              {autoBackupError ? (
+                <p className="font-bold text-rose-700">{autoBackupError}</p>
+              ) : (
+                <div className="space-y-2">
+                  <p><span className="font-black text-slate-950">Status:</span> {autoBackupReady ? 'Ready' : 'Needs Render env setup'}</p>
+                  <p><span className="font-black text-slate-950">Storage:</span> {autoBackupStorageLabel}</p>
+                  <p><span className="font-black text-slate-950">Mode:</span> overwrite latest backup daily</p>
+                  <p><span className="font-black text-slate-950">Last success:</span> {autoBackupStatus?.lastCompletedAt ? formatSyncTime(autoBackupStatus.lastCompletedAt) : 'Not run yet'}</p>
+                  {autoBackupStatus?.lastFailedAt && (
+                    <p className="text-rose-700"><span className="font-black">Last failure:</span> {formatSyncTime(autoBackupStatus.lastFailedAt)} {autoBackupStatus.lastFailedError ? `· ${autoBackupStatus.lastFailedError}` : ''}</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button className="btn-primary" type="button" onClick={runAutoBackupNow} disabled={Boolean(busy) || !autoBackupReady}>
+                <RefreshCw size={16} /> {busy === 'auto-backup' ? 'Saving backup...' : 'Run backup now'}
+              </button>
+              <button className="btn-ghost" type="button" onClick={downloadLatestAutoBackup} disabled={Boolean(busy) || !autoBackupStatus?.configured}>
+                <Download size={16} /> {busy === 'download-auto-backup' ? 'Downloading...' : 'Download latest auto backup'}
+              </button>
+              <button className="btn-ghost" type="button" onClick={loadAutoBackupStatus} disabled={Boolean(busy)}>
+                <RefreshCw size={16} /> Refresh status
+              </button>
+            </div>
+
+            <p className="mt-4 text-xs text-emerald-900">Render Cron should call <span className="font-mono">POST /api/admin/backup/auto</span> with the <span className="font-mono">x-backup-cron-secret</span> header. The bucket must stay private, because public backups are how apps become cautionary tales.</p>
           </div>
 
           <div className="rounded-3xl border border-rose-100 bg-rose-50 p-5">

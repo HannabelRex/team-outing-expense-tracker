@@ -172,3 +172,104 @@ git push origin main
 ```
 
 Both Vercel and Render may redeploy because Phase 15 changes frontend and backend files.
+
+---
+
+# Phase 15B - Daily Automatic Backup to Supabase Storage
+
+Phase 15B adds a daily automatic backup workflow that stores one full-app JSON backup in a private Supabase Storage bucket and overwrites the old backup with the newest one.
+
+## Recommended Supabase bucket
+
+```text
+app-backups
+```
+
+Bucket settings:
+
+```text
+Public bucket: disabled
+File size limit: 10 MB
+Allowed MIME type: application/json
+```
+
+Backup path:
+
+```text
+daily/latest-backup.json
+```
+
+## New Render environment variables
+
+```text
+AUTO_BACKUP_ENABLED=true
+AUTO_BACKUP_BUCKET=app-backups
+AUTO_BACKUP_PATH=daily/latest-backup.json
+AUTO_BACKUP_MAX_BYTES=10485760
+BACKUP_CRON_SECRET=<random long secret>
+```
+
+Existing variables reused:
+
+```text
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+```
+
+## New endpoints
+
+Cron endpoint:
+
+```text
+POST /api/admin/backup/auto
+```
+
+Required header:
+
+```text
+x-backup-cron-secret: <BACKUP_CRON_SECRET>
+```
+
+Admin-only endpoints:
+
+```text
+GET /api/admin/backup/auto-status
+POST /api/admin/backup/auto-run
+GET /api/admin/backup/latest
+```
+
+## Render Cron Job command
+
+```bash
+curl -X POST "https://team-outing-expense-tracker-api.onrender.com/api/admin/backup/auto" -H "x-backup-cron-secret: $BACKUP_CRON_SECRET"
+```
+
+Suggested schedule:
+
+```text
+0 2 * * *
+```
+
+## Audit actions
+
+```text
+backup.auto_completed
+backup.auto_failed
+backup.auto_downloaded
+```
+
+## Deploy steps
+
+```powershell
+cd C:\Users\ksath\Downloads\team-outing-expense-tracker-mobile-pwa\team-outing-expense-tracker
+
+git status
+
+git add -A
+
+git commit -m "Add daily automatic backup workflow"
+
+git push origin main
+```
+
+Both Vercel and Render may redeploy because Phase 15B changes frontend and backend files.
