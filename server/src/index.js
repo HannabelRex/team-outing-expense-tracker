@@ -632,6 +632,35 @@ function userHasAccess(user) {
   return (user?.accessStatus || 'active') !== 'disabled';
 }
 
+function markStoreDirty(data) {
+  if (!data || typeof data !== 'object') return;
+  Object.defineProperty(data, '__storeDirty', {
+    value: true,
+    writable: true,
+    configurable: true,
+    enumerable: false
+  });
+}
+
+function isStoreDirty(data) {
+  return Boolean(data && data.__storeDirty);
+}
+
+function shouldRefreshLastLoginAt(user) {
+  if (!user?.lastLoginAt) return true;
+  const lastLoginAt = new Date(user.lastLoginAt).getTime();
+  if (!Number.isFinite(lastLoginAt)) return true;
+  return Date.now() - lastLoginAt > 10 * 60 * 1000;
+}
+
+async function writeStoreIfDirty(data) {
+  if (isStoreDirty(data)) {
+    await writeStore(data);
+    return true;
+  }
+  return false;
+}
+
 function activeAdminCount(users) {
   return users.filter((user) => user.role === 'admin' && userHasAccess(user)).length;
 }
@@ -690,6 +719,7 @@ function resolveAppUser(data, authUser) {
   const users = ensureUsers(data);
   const email = authUser?.email || '';
   let user = users.find((item) => item.authUserId === authUser?.id) || users.find((item) => item.email?.toLowerCase() === email.toLowerCase());
+  let changed = false;
 
   if (!user) {
     user = {
@@ -701,18 +731,33 @@ function resolveAppUser(data, authUser) {
       createdAt: new Date().toISOString()
     };
     users.push(user);
+    changed = true;
   }
 
-  if (!user.authUserId) user.authUserId = authUser.id;
-  if (!user.email && email) user.email = email;
-  if (!user.accessStatus) user.accessStatus = 'active';
+  if (!user.authUserId) {
+    user.authUserId = authUser.id;
+    changed = true;
+  }
+  if (!user.email && email) {
+    user.email = email;
+    changed = true;
+  }
+  if (!user.accessStatus) {
+    user.accessStatus = 'active';
+    changed = true;
+  }
   if (!userHasAccess(user)) {
     const error = new Error('Your access to this app has been removed by an administrator. Please contact the event admin if this is unexpected. Bureaucracy finally found the login screen.');
     error.statusCode = 403;
     throw error;
   }
-  acceptMatchingInvitesForUser(data, user);
-  user.lastLoginAt = new Date().toISOString();
+  const acceptedInvites = acceptMatchingInvitesForUser(data, user);
+  if (acceptedInvites.length > 0) changed = true;
+  if (shouldRefreshLastLoginAt(user)) {
+    user.lastLoginAt = new Date().toISOString();
+    changed = true;
+  }
+  if (changed) markStoreDirty(data);
   return user;
 }
 
@@ -1209,7 +1254,8 @@ app.get('/api/health', (req, res) => {
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured',
     adminBackupRestore: 'enabled',
     dailyAutoBackup: AUTO_BACKUP_ENABLED ? 'enabled' : 'disabled',
-    dailyAutoBackupStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? `${AUTO_BACKUP_BUCKET}/${AUTO_BACKUP_PATH}` : 'not-configured'
+    dailyAutoBackupStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? `${AUTO_BACKUP_BUCKET}/${AUTO_BACKUP_PATH}` : 'not-configured',
+    loginPerformanceOptimization: 'enabled'
   });
 });
 
@@ -1243,6 +1289,7 @@ app.get('/api/admin/backup/auto-status', asyncHandler(async (req, res) => {
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
   requireRole(currentUser, ['admin']);
+  await writeStoreIfDirty(data);
   res.json(autoBackupStatusPayload(data));
 }));
 
@@ -1630,16 +1677,35 @@ app.post('/api/users/:id/password-reset', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/bootstrap', asyncHandler(async (req, res) => {
+  const startedAt = process.hrtime.bigint();
+  const timings = {};
+  const mark = (label, from) => {
+    timings[label] = Number(process.hrtime.bigint() - from) / 1e6;
+  };
+
+  const readStartedAt = process.hrtime.bigint();
   const data = await readStore();
+  mark('readStoreMs', readStartedAt);
+
+  const normalizeStartedAt = process.hrtime.bigint();
   normalizeMultiEventStore(data);
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
   const noAssignedEvent = Boolean(activeEvent.noAssignedEvent);
+  mark('normalizeAndUserMs', normalizeStartedAt);
+
+  const calculateStartedAt = process.hrtime.bigint();
   const dashboard = calculateDashboard(activeEvent);
   const settlementPlan = noAssignedEvent ? { settlements: [], allSettled: false, participantBalances: [] } : syncSettlements(activeEvent);
   const eventList = visibleEventsForUser(data, currentUser).map(eventSummary);
-  await writeStore(data);
-  res.json({
+  mark('calculateMs', calculateStartedAt);
+
+  const writeStartedAt = process.hrtime.bigint();
+  const wroteStore = await writeStoreIfDirty(data);
+  mark('conditionalWriteMs', writeStartedAt);
+
+  const responseStartedAt = process.hrtime.bigint();
+  const responsePayload = {
     ...activeEvent,
     event: { ...activeEvent.event, status: activeEvent.status },
     activeEventId: noAssignedEvent ? '' : activeEvent.id,
@@ -1650,7 +1716,19 @@ app.get('/api/bootstrap', asyncHandler(async (req, res) => {
     invitations: ['admin', 'finance'].includes(currentUser.role) ? ensureInvitations(data).map((invite) => publicInvitation(invite, data)) : [],
     dashboard,
     settlementPlan
+  };
+  mark('responseBuildMs', responseStartedAt);
+  timings.totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+
+  console.log('Bootstrap performance timing', {
+    userId: currentUser.id,
+    role: currentUser.role,
+    activeEventId: noAssignedEvent ? '' : activeEvent.id,
+    wroteStore,
+    ...Object.fromEntries(Object.entries(timings).map(([key, value]) => [key, Number(value.toFixed(1))]))
   });
+
+  res.json(responsePayload);
 }));
 
 app.get('/api/events', asyncHandler(async (req, res) => {
@@ -1659,7 +1737,7 @@ app.get('/api/events', asyncHandler(async (req, res) => {
   const currentUser = resolveAppUser(data, req.authUser);
   requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getEventRecordForUser(data, currentUser);
-  await writeStore(data);
+  await writeStoreIfDirty(data);
   res.json({ activeEventId: activeEvent.id, events: visibleEventsForUser(data, currentUser).map(eventSummary) });
 }));
 
@@ -2478,7 +2556,7 @@ app.get('/api/audit', asyncHandler(async (req, res) => {
   const rows = (activeEvent.auditLog || [])
     .map(publicAuditEntry)
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  await writeStore(data);
+  await writeStoreIfDirty(data);
   res.json(rows);
 }));
 
@@ -2491,7 +2569,7 @@ app.get('/api/notification-inbox', asyncHandler(async (req, res) => {
     .filter((notification) => notificationVisibleToUser(notification, activeEvent, currentUser))
     .map((notification) => inboxNotification(notification, activeEvent, currentUser))
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  await writeStore(data);
+  await writeStoreIfDirty(data);
   res.json(rows);
 }));
 

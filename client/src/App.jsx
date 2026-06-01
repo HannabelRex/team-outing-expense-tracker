@@ -218,19 +218,48 @@ function browserIsOnline() {
   return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
 }
 
-function readCachedBootstrap() {
+function decodeJwtPayload(token = '') {
   try {
-    const raw = window.localStorage.getItem(BOOTSTRAP_CACHE_KEY);
+    const payload = String(token).split('.')[1];
+    if (!payload) return {};
+    const padded = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=');
+    return JSON.parse(window.atob(padded));
+  } catch {
+    return {};
+  }
+}
+
+function sessionIdentityKey(session) {
+  const payload = decodeJwtPayload(session?.access_token || '');
+  return session?.user?.id || payload.sub || normalizeEmail(session?.user?.email || payload.email || '');
+}
+
+function bootstrapMatchesSession(data, session) {
+  const identity = sessionIdentityKey(session);
+  if (!identity) return true;
+  const currentUser = data?.currentUser || {};
+  return [currentUser.authUserId, currentUser.id, normalizeEmail(currentUser.email)].filter(Boolean).includes(identity);
+}
+
+function bootstrapCacheKey(session) {
+  const identity = sessionIdentityKey(session);
+  return identity ? `${BOOTSTRAP_CACHE_KEY}:${identity}` : BOOTSTRAP_CACHE_KEY;
+}
+
+function readCachedBootstrap(session = null) {
+  try {
+    const raw = window.localStorage.getItem(bootstrapCacheKey(session));
     if (!raw) return null;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return bootstrapMatchesSession(parsed, session) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function saveCachedBootstrap(data) {
+function saveCachedBootstrap(data, session = null) {
   try {
-    window.localStorage.setItem(BOOTSTRAP_CACHE_KEY, JSON.stringify(data));
+    window.localStorage.setItem(bootstrapCacheKey(session), JSON.stringify(data));
   } catch {
     // Cached data is helpful, not mission critical. The browser may refuse storage in private mode.
   }
@@ -953,6 +982,95 @@ function Dashboard({ data }) {
 
 
 function AnalyticsDashboard({ data }) {
+  const analytics = useMemo(() => {
+    const currency = data.event?.currency || 'INR';
+    const expenses = data.expenses || [];
+    const categories = data.dashboard?.categorySpending || [];
+    const eventList = data.eventList || [];
+    const approvedExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'approved');
+    const pendingExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
+    const rejectedExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'rejected');
+    const approvedAmount = approvedExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const pendingAmount = pendingExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const rejectedAmount = rejectedExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const submittedAmount = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const budget = Number(data.event.estimatedBudget || data.dashboard?.totalBudget || 0);
+    const budgetUsed = budget > 0 ? Math.min(999, (Number(data.dashboard?.totalSpent || 0) / budget) * 100) : 0;
+    const receiptsAttached = expenses.filter((expense) => expense.receipt).length;
+    const categoryChartData = categories.map((category) => ({
+      name: category.name,
+      Estimated: Number(category.estimatedCost || 0),
+      Actual: Number(category.actualCost || 0),
+      variance: Number(category.actualCost || 0) - Number(category.estimatedCost || 0)
+    }));
+    const categoryPieData = categories
+      .filter((category) => Number(category.actualCost || 0) > 0)
+      .map((category) => ({ name: category.name, value: Number(category.actualCost || 0) }));
+    const participantContributionData = (data.dashboard?.participantBalances || [])
+      .map((person) => ({
+        name: person.name,
+        Paid: Number(person.amountPaid || 0),
+        Owed: Number(person.amountOwed || 0),
+        Net: Number(person.netBalance || 0)
+      }))
+      .sort((a, b) => b.Paid - a.Paid);
+    const statusChartData = [
+      { name: 'Approved', amount: approvedAmount, count: approvedExpenses.length },
+      { name: 'Pending', amount: pendingAmount, count: pendingExpenses.length },
+      { name: 'Rejected', amount: rejectedAmount, count: rejectedExpenses.length }
+    ].filter((item) => item.amount > 0 || item.count > 0);
+    const eventComparison = eventList.map((eventItem) => ({
+      ...eventItem,
+      budgetUsed: Number(eventItem.estimatedBudget || 0) > 0 ? (Number(eventItem.totalSpent || 0) / Number(eventItem.estimatedBudget || 0)) * 100 : 0
+    }));
+    const topCategory = [...categories].sort((a, b) => Number(b.actualCost || 0) - Number(a.actualCost || 0))[0];
+    const topContributor = [...participantContributionData].sort((a, b) => b.Paid - a.Paid)[0];
+    return {
+      currency,
+      expenses,
+      categories,
+      approvedExpenses,
+      pendingExpenses,
+      rejectedExpenses,
+      approvedAmount,
+      pendingAmount,
+      rejectedAmount,
+      submittedAmount,
+      budget,
+      budgetUsed,
+      receiptsAttached,
+      categoryChartData,
+      categoryPieData,
+      participantContributionData,
+      statusChartData,
+      eventComparison,
+      topCategory,
+      topContributor
+    };
+  }, [data]);
+
+  const {
+    currency,
+    expenses,
+    approvedExpenses,
+    pendingExpenses,
+    rejectedExpenses,
+    approvedAmount,
+    pendingAmount,
+    rejectedAmount,
+    submittedAmount,
+    budget,
+    budgetUsed,
+    receiptsAttached,
+    categoryChartData,
+    categoryPieData,
+    participantContributionData,
+    statusChartData,
+    eventComparison,
+    topCategory,
+    topContributor
+  } = analytics;
+
   if (data.noAssignedEvent) {
     return (
       <Section title="Analytics" icon={WalletCards}>
@@ -960,49 +1078,6 @@ function AnalyticsDashboard({ data }) {
       </Section>
     );
   }
-
-  const currency = data.event.currency;
-  const expenses = data.expenses || [];
-  const categories = data.dashboard?.categorySpending || [];
-  const eventList = data.eventList || [];
-  const approvedExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'approved');
-  const pendingExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
-  const rejectedExpenses = expenses.filter((expense) => (expense.approvalStatus || 'pending') === 'rejected');
-  const approvedAmount = approvedExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const pendingAmount = pendingExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const rejectedAmount = rejectedExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const submittedAmount = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const budget = Number(data.event.estimatedBudget || data.dashboard?.totalBudget || 0);
-  const budgetUsed = budget > 0 ? Math.min(999, (data.dashboard.totalSpent / budget) * 100) : 0;
-  const receiptsAttached = expenses.filter((expense) => expense.receipt).length;
-  const categoryChartData = categories.map((category) => ({
-    name: category.name,
-    Estimated: Number(category.estimatedCost || 0),
-    Actual: Number(category.actualCost || 0),
-    variance: Number(category.actualCost || 0) - Number(category.estimatedCost || 0)
-  }));
-  const categoryPieData = categories
-    .filter((category) => Number(category.actualCost || 0) > 0)
-    .map((category) => ({ name: category.name, value: Number(category.actualCost || 0) }));
-  const participantContributionData = (data.dashboard?.participantBalances || [])
-    .map((person) => ({
-      name: person.name,
-      Paid: Number(person.amountPaid || 0),
-      Owed: Number(person.amountOwed || 0),
-      Net: Number(person.netBalance || 0)
-    }))
-    .sort((a, b) => b.Paid - a.Paid);
-  const statusChartData = [
-    { name: 'Approved', amount: approvedAmount, count: approvedExpenses.length },
-    { name: 'Pending', amount: pendingAmount, count: pendingExpenses.length },
-    { name: 'Rejected', amount: rejectedAmount, count: rejectedExpenses.length }
-  ].filter((item) => item.amount > 0 || item.count > 0);
-  const eventComparison = eventList.map((eventItem) => ({
-    ...eventItem,
-    budgetUsed: Number(eventItem.estimatedBudget || 0) > 0 ? (Number(eventItem.totalSpent || 0) / Number(eventItem.estimatedBudget || 0)) * 100 : 0
-  }));
-  const topCategory = [...categories].sort((a, b) => Number(b.actualCost || 0) - Number(a.actualCost || 0))[0];
-  const topContributor = [...participantContributionData].sort((a, b) => b.Paid - a.Paid)[0];
 
   return (
     <div className="space-y-6">
@@ -3252,12 +3327,22 @@ function AppShell() {
     setToast('Signed out. The app will now stop trusting you, professionally.');
   }
 
-  async function reload() {
-    const cachedBootstrap = readCachedBootstrap();
+  async function reload({ useImmediateCache = true } = {}) {
+    const cachedBootstrap = readCachedBootstrap(session);
+    const canUseCachedBootstrap = Boolean(cachedBootstrap);
+
+    if (useImmediateCache && canUseCachedBootstrap) {
+      setData(cachedBootstrap);
+      setError('');
+      setLoading(false);
+      if (browserIsOnline()) {
+        setOfflineNotice('Showing cached outing data while the server refreshes in the background.');
+      }
+    }
 
     if (!browserIsOnline()) {
       setIsOnline(false);
-      if (cachedBootstrap) {
+      if (canUseCachedBootstrap) {
         setData(cachedBootstrap);
         setError('');
         setOfflineNotice('You are offline. Showing the last synced outing data from this device.');
@@ -3269,16 +3354,16 @@ function AppShell() {
     }
 
     try {
-      setLoading(true);
+      if (!canUseCachedBootstrap) setLoading(true);
       const bootstrap = await api('/bootstrap');
       setData(bootstrap);
-      saveCachedBootstrap(bootstrap);
+      saveCachedBootstrap(bootstrap, session);
       const syncedAt = saveLastSyncedAt();
       setLastSyncedAt(syncedAt);
       setOfflineNotice('');
       setError('');
     } catch (err) {
-      if (cachedBootstrap) {
+      if (canUseCachedBootstrap) {
         setData(cachedBootstrap);
         setError('');
         setOfflineNotice(`Could not refresh from the server. Showing last synced data instead. ${err.message}`);
@@ -3371,9 +3456,11 @@ function AppShell() {
   }, [session?.access_token]);
 
   useEffect(() => {
-    if (data && session?.access_token) {
+    if (!data || !session?.access_token) return undefined;
+    const timer = window.setTimeout(() => {
       loadNotificationInbox();
-    }
+    }, 1200);
+    return () => window.clearTimeout(timer);
   }, [data?.activeEventId, data?.noAssignedEvent, session?.access_token]);
 
   useEffect(() => {

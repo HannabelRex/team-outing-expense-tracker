@@ -273,3 +273,62 @@ git push origin main
 ```
 
 Both Vercel and Render may redeploy because Phase 15B changes frontend and backend files.
+
+---
+
+# Phase 16 - Login Performance Optimization
+
+Phase 16 improves post-sign-in loading performance and perceived speed.
+
+## Included improvements
+
+- Shows session-safe cached `/api/bootstrap` data immediately after sign-in when available.
+- Refreshes latest server data in the background.
+- Delays notification inbox refresh so it does not compete with the initial dashboard load.
+- Memoizes analytics calculations with `useMemo`.
+- Adds backend timing logs for `/api/bootstrap`.
+- Reduces avoidable full JSON-state writes from read-heavy endpoints by using dirty-store tracking.
+- Updates `lastLoginAt` at most once every 10 minutes per user instead of every authenticated read request.
+
+## Render log to check
+
+```text
+Bootstrap performance timing
+```
+
+This log shows:
+
+```text
+readStoreMs
+normalizeAndUserMs
+calculateMs
+conditionalWriteMs
+responseBuildMs
+totalMs
+```
+
+## New health flag
+
+```json
+"loginPerformanceOptimization": "enabled"
+```
+
+## Environment variables
+
+No new Render or Vercel environment variables are required.
+
+## Deploy steps
+
+```powershell
+cd C:\Users\ksath\Downloads\team-outing-expense-tracker-mobile-pwa\team-outing-expense-tracker
+
+git status
+
+git add -A
+
+git commit -m "Optimize login loading performance"
+
+git push origin main
+```
+
+Both Render and Vercel may redeploy because Phase 16 changes backend and frontend files.
