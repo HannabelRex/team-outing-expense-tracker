@@ -344,3 +344,9 @@ Invite-based signup is now invite-aware. When a user opens an invitation link an
 
 The Settlements screen now collects the actual amount paid when marking a settlement as partially paid. Admin/Finance users can enter the partial paid amount and an optional transaction/reference note. Settlement cards now show total, paid, and remaining amounts, and backend status is derived from the paid amount to avoid inconsistent partial/full settlement state.
 
+
+## Theme Picker Hotfix - Vibrant Color Profiles
+
+A top-header **Themes** button is now available to all signed-in roles. Users can switch between multiple vibrant palettes, including Signature Blend, Travel Blue + Emerald, Sunset Coral + Indigo, Electric Cyan + Royal Purple, Forest Green + Gold, and Coorg Nature Theme.
+
+Theme selection is stored locally in the user's browser with `localStorage`; it does not change shared app state and does not require backend routes, database changes, or environment variables.

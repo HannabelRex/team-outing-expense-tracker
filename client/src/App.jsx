@@ -9,6 +9,7 @@ import {
   FileText,
   Filter,
   MapPin,
+  Palette,
   LogOut,
   LockKeyhole,
   Plus,
@@ -53,8 +54,176 @@ const SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MINUTES * 60 * 1000;
 const BOOTSTRAP_CACHE_KEY = 'team-outing-bootstrap-cache-v1';
 const LAST_SYNCED_AT_KEY = 'team-outing-last-synced-at-v1';
 const OFFLINE_EXPENSE_DRAFTS_KEY = 'team-outing-offline-expense-drafts-v1';
+const THEME_STORAGE_KEY = 'team-outing-theme-v1';
 const ALLOWED_RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 const MAX_RECEIPT_BYTES = 4 * 1024 * 1024;
+
+const APP_THEMES = [
+  {
+    key: 'blue-emerald',
+    name: 'Travel Blue + Emerald',
+    description: 'Clean SaaS energy with a fresh travel accent.',
+    primary: '#2563EB',
+    primaryStrong: '#1D4ED8',
+    secondary: '#10B981',
+    accent: '#06B6D4',
+    headerGradient: 'linear-gradient(135deg, #020617 0%, #0F172A 45%, #0E7490 100%)',
+    background: 'linear-gradient(180deg, #F0F9FF 0%, #EEF2FF 55%, #F8FAFC 100%)',
+    surface: '#FFFFFF',
+    navBackground: 'rgba(255, 255, 255, 0.92)',
+    tabBg: '#E0F2FE',
+    tabText: '#0F172A',
+    actionSurface: '#FFFFFF',
+    actionText: '#0F172A',
+    ring: 'rgba(37, 99, 235, 0.22)',
+    shadow: '0 22px 50px rgba(37, 99, 235, 0.13)',
+    buttonGradient: 'linear-gradient(135deg, #2563EB 0%, #10B981 100%)'
+  },
+  {
+    key: 'sunset-indigo',
+    name: 'Sunset Coral + Indigo',
+    description: 'Warm, energetic, and outing-friendly.',
+    primary: '#F97316',
+    primaryStrong: '#C2410C',
+    secondary: '#7C3AED',
+    accent: '#EC4899',
+    headerGradient: 'linear-gradient(135deg, #111827 0%, #312E81 48%, #F97316 100%)',
+    background: 'linear-gradient(180deg, #FFF7ED 0%, #FDF2F8 60%, #FFF1F2 100%)',
+    surface: '#FFFFFF',
+    navBackground: 'rgba(255, 247, 237, 0.94)',
+    tabBg: '#FFEDD5',
+    tabText: '#431407',
+    actionSurface: '#FFFFFF',
+    actionText: '#431407',
+    ring: 'rgba(249, 115, 22, 0.26)',
+    shadow: '0 22px 50px rgba(249, 115, 22, 0.14)',
+    buttonGradient: 'linear-gradient(135deg, #F97316 0%, #EC4899 100%)'
+  },
+  {
+    key: 'electric-purple',
+    name: 'Electric Cyan + Royal Purple',
+    description: 'Bold tech dashboard mood, minus the crypto cringe.',
+    primary: '#0891B2',
+    primaryStrong: '#0E7490',
+    secondary: '#7E22CE',
+    accent: '#38BDF8',
+    headerGradient: 'linear-gradient(135deg, #030712 0%, #312E81 50%, #0891B2 100%)',
+    background: 'linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 52%, #F0FDFF 100%)',
+    surface: '#FFFFFF',
+    navBackground: 'rgba(248, 250, 252, 0.93)',
+    tabBg: '#E0E7FF',
+    tabText: '#1E1B4B',
+    actionSurface: '#FFFFFF',
+    actionText: '#1E1B4B',
+    ring: 'rgba(126, 34, 206, 0.24)',
+    shadow: '0 22px 50px rgba(8, 145, 178, 0.14)',
+    buttonGradient: 'linear-gradient(135deg, #0891B2 0%, #7E22CE 100%)'
+  },
+  {
+    key: 'forest-gold',
+    name: 'Forest Green + Gold',
+    description: 'Finance-first trust with a premium glow.',
+    primary: '#16A34A',
+    primaryStrong: '#166534',
+    secondary: '#EAB308',
+    accent: '#84CC16',
+    headerGradient: 'linear-gradient(135deg, #052E16 0%, #14532D 54%, #CA8A04 100%)',
+    background: 'linear-gradient(180deg, #F0FDF4 0%, #FEFCE8 58%, #F8FAFC 100%)',
+    surface: '#FFFFFF',
+    navBackground: 'rgba(240, 253, 244, 0.94)',
+    tabBg: '#DCFCE7',
+    tabText: '#052E16',
+    actionSurface: '#FFFFFF',
+    actionText: '#052E16',
+    ring: 'rgba(22, 163, 74, 0.24)',
+    shadow: '0 22px 50px rgba(22, 163, 74, 0.14)',
+    buttonGradient: 'linear-gradient(135deg, #16A34A 0%, #EAB308 100%)'
+  },
+  {
+    key: 'coorg-nature',
+    name: 'Coorg Nature Theme',
+    description: 'Coffee, rainforest, mist, and travel charm.',
+    primary: '#15803D',
+    primaryStrong: '#14532D',
+    secondary: '#0EA5E9',
+    accent: '#92400E',
+    headerGradient: 'linear-gradient(135deg, #1C1917 0%, #14532D 52%, #0EA5E9 100%)',
+    background: 'linear-gradient(180deg, #FAF7F0 0%, #ECFDF5 54%, #F0F9FF 100%)',
+    surface: '#FFFFFF',
+    navBackground: 'rgba(250, 247, 240, 0.94)',
+    tabBg: '#DCFCE7',
+    tabText: '#1C1917',
+    actionSurface: '#FFFFFF',
+    actionText: '#1C1917',
+    ring: 'rgba(21, 128, 61, 0.24)',
+    shadow: '0 22px 50px rgba(21, 128, 61, 0.14)',
+    buttonGradient: 'linear-gradient(135deg, #15803D 0%, #0EA5E9 100%)'
+  },
+  {
+    key: 'signature-blend',
+    name: 'Signature Blend',
+    description: 'Blue SaaS base with warm Coorg accents.',
+    primary: '#2563EB',
+    primaryStrong: '#1E40AF',
+    secondary: '#10B981',
+    accent: '#F59E0B',
+    headerGradient: 'linear-gradient(135deg, #020617 0%, #1E3A8A 44%, #15803D 75%, #F59E0B 120%)',
+    background: 'linear-gradient(180deg, #F0F9FF 0%, #ECFDF5 52%, #FFFBEB 100%)',
+    surface: '#FFFFFF',
+    navBackground: 'rgba(255, 255, 255, 0.94)',
+    tabBg: '#DBEAFE',
+    tabText: '#0F172A',
+    actionSurface: '#FFFFFF',
+    actionText: '#0F172A',
+    ring: 'rgba(37, 99, 235, 0.24)',
+    shadow: '0 22px 50px rgba(37, 99, 235, 0.13)',
+    buttonGradient: 'linear-gradient(135deg, #2563EB 0%, #10B981 55%, #F59E0B 130%)'
+  }
+];
+
+const DEFAULT_THEME_KEY = 'signature-blend';
+
+function getThemeByKey(key) {
+  return APP_THEMES.find((theme) => theme.key === key) || APP_THEMES.find((theme) => theme.key === DEFAULT_THEME_KEY) || APP_THEMES[0];
+}
+
+function readSavedThemeKey() {
+  try {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return getThemeByKey(saved).key;
+  } catch {
+    return DEFAULT_THEME_KEY;
+  }
+}
+
+function saveThemeKey(key) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, key);
+  } catch {
+    // Theme still changes for the current session if localStorage is unavailable.
+  }
+}
+
+function buildThemeVars(theme) {
+  return {
+    '--theme-primary': theme.primary,
+    '--theme-primary-strong': theme.primaryStrong,
+    '--theme-secondary': theme.secondary,
+    '--theme-accent': theme.accent,
+    '--theme-header-gradient': theme.headerGradient,
+    '--theme-background': theme.background,
+    '--theme-surface': theme.surface,
+    '--theme-nav-background': theme.navBackground,
+    '--theme-tab-bg': theme.tabBg,
+    '--theme-tab-text': theme.tabText,
+    '--theme-action-surface': theme.actionSurface,
+    '--theme-action-text': theme.actionText,
+    '--theme-ring': theme.ring,
+    '--theme-shadow': theme.shadow,
+    '--theme-button-gradient': theme.buttonGradient
+  };
+}
+
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -2587,6 +2756,80 @@ function Reports({ data, setToast }) {
 }
 
 
+function ThemePicker({ activeThemeKey, onThemeChange }) {
+  const [open, setOpen] = useState(false);
+  const activeTheme = getThemeByKey(activeThemeKey);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [open]);
+
+  return (
+    <div className="relative">
+      <button
+        className="app-header-action rounded-2xl px-4 py-2 font-bold"
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title="Choose website theme"
+      >
+        <Palette className="inline" size={16} /> Themes
+      </button>
+
+      {open && (
+        <div className="app-theme-menu absolute right-0 z-40 mt-3 w-80 rounded-3xl p-4 shadow-soft ring-1" role="menu">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-500">Theme palette</p>
+              <p className="mt-1 text-sm font-bold text-slate-700">Active: {activeTheme.name}</p>
+            </div>
+            <button className="rounded-xl bg-slate-100 p-2 text-slate-600 hover:bg-slate-200" type="button" onClick={() => setOpen(false)} aria-label="Close theme picker">
+              <X size={15} />
+            </button>
+          </div>
+
+          <div className="grid gap-2">
+            {APP_THEMES.map((theme) => {
+              const selected = theme.key === activeTheme.key;
+              return (
+                <button
+                  key={theme.key}
+                  className={`app-theme-option text-left ${selected ? 'app-theme-option-active' : ''}`}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  onClick={() => {
+                    onThemeChange(theme.key);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="theme-swatch" style={{ background: theme.headerGradient }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-black text-slate-950">{theme.name}</span>
+                      <span className="block text-xs leading-5 text-slate-500">{theme.description}</span>
+                    </span>
+                    {selected && <CheckCircle2 className="text-emerald-600" size={17} />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function InstallAppButton({ setToast }) {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -2631,7 +2874,7 @@ function InstallAppButton({ setToast }) {
   }
 
   return (
-    <button className="rounded-2xl bg-white px-4 py-2 font-bold text-slate-950" onClick={install} type="button">
+    <button className="app-header-action rounded-2xl px-4 py-2 font-bold" onClick={install} type="button">
       <Smartphone className="inline" size={16} /> Install app
     </button>
   );
@@ -3372,6 +3615,7 @@ function AppShell() {
   const [isOnline, setIsOnline] = useState(() => browserIsOnline());
   const [lastSyncedAt, setLastSyncedAt] = useState(() => readLastSyncedAt());
   const [offlineNotice, setOfflineNotice] = useState('');
+  const [themeKey, setThemeKey] = useState(() => readSavedThemeKey());
 
   function handleSession(nextSession) {
     const hasToken = Boolean(nextSession?.access_token);
@@ -3594,6 +3838,15 @@ function AppShell() {
   const canManageParticipants = currentRole === 'admin' || currentRole === 'finance';
   const canManageBudget = currentRole === 'admin' || currentRole === 'finance';
   const unreadInboxCount = inboxItems.filter((item) => !item.read).length;
+  const activeTheme = useMemo(() => getThemeByKey(themeKey), [themeKey]);
+  const themeVars = useMemo(() => buildThemeVars(activeTheme), [activeTheme]);
+
+  function changeTheme(nextThemeKey) {
+    const nextTheme = getThemeByKey(nextThemeKey);
+    setThemeKey(nextTheme.key);
+    saveThemeKey(nextTheme.key);
+    setToast(`Theme changed to ${nextTheme.name}. Finally, a personality upgrade.`);
+  }
 
   const tabs = useMemo(() => {
     const visibleTabs = [
@@ -3671,8 +3924,8 @@ function AppShell() {
   const currency = data.event.currency;
 
   return (
-    <main className="min-h-screen bg-slate-100 text-slate-900">
-      <header className="bg-slate-950 text-white">
+    <main className="theme-shell min-h-screen text-slate-900" style={themeVars}>
+      <header className="app-header text-white">
         <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-start justify-between gap-5">
             <div>
@@ -3693,7 +3946,7 @@ function AppShell() {
             <div className="flex flex-wrap items-center gap-3">
               {canSwitchEvents && data.eventList?.length > 0 && (
                 <select
-                  className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950"
+                  className="app-header-action rounded-2xl px-4 py-2 text-sm font-bold"
                   value={data.activeEventId || ''}
                   onChange={(e) => switchEvent(e.target.value)}
                   disabled={!isOnline}
@@ -3712,7 +3965,7 @@ function AppShell() {
                 </div>
               )}
               <button
-                className="relative rounded-2xl bg-white px-4 py-2 font-bold text-slate-950"
+                className="app-header-action relative rounded-2xl px-4 py-2 font-bold"
                 type="button"
                 onClick={() => { setInboxOpen(true); loadNotificationInbox(); }}
                 aria-label="Open notification inbox"
@@ -3722,9 +3975,10 @@ function AppShell() {
                   <span className="absolute -right-2 -top-2 rounded-full bg-rose-600 px-2 py-0.5 text-xs font-black text-white">{unreadInboxCount}</span>
                 )}
               </button>
+              <ThemePicker activeThemeKey={themeKey} onThemeChange={changeTheme} />
               <InstallAppButton setToast={setToast} />
-              <button className="rounded-2xl bg-white px-4 py-2 font-bold text-slate-950" onClick={reload} type="button"><RefreshCw className="inline" size={16} /> Refresh</button>
-              <button className="rounded-2xl bg-white px-4 py-2 font-bold text-slate-950" onClick={logout} type="button"><LogOut className="inline" size={16} /> Sign out</button>
+              <button className="app-header-action rounded-2xl px-4 py-2 font-bold" onClick={reload} type="button"><RefreshCw className="inline" size={16} /> Refresh</button>
+              <button className="app-header-action rounded-2xl px-4 py-2 font-bold" onClick={logout} type="button"><LogOut className="inline" size={16} /> Sign out</button>
             </div>
           </div>
         </div>
@@ -3732,10 +3986,10 @@ function AppShell() {
 
       <OfflineStatusBanner isOnline={isOnline} lastSyncedAt={lastSyncedAt} offlineNotice={offlineNotice} />
 
-      <nav className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
+      <nav className="app-nav sticky top-0 z-10 border-b backdrop-blur">
         <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-3 sm:px-6 lg:px-8">
           {tabs.map(([key, label]) => (
-            <button key={key} className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-bold ${activeTab === key ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`} onClick={() => setActiveTab(key)} type="button">
+            <button key={key} className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-bold ${activeTab === key ? 'app-tab-active' : 'app-tab-idle'}`} onClick={() => setActiveTab(key)} type="button">
               {label}
             </button>
           ))}
