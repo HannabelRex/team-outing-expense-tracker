@@ -493,3 +493,10 @@ See `docs/login-workspace-access-redesign-hotfix.md` for details.
 
 The login screen now uses clearer visual hierarchy for the top heading, field labels, Forgot password link, and New user/Create account action. The update improves readability on the glassmorphism card while keeping the existing workspace-access login layout.
 
+
+### Login readability contrast hotfix
+
+- Improved the Workspace Access login screen contrast.
+- Login card now uses a brighter frosted surface.
+- Sign in/Create account headings, Email/Password labels, Forgot password, and account-switch links are now more readable.
+- No backend or environment variable changes are required.
