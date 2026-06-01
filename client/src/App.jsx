@@ -2870,16 +2870,34 @@ function AuditTrail({ data, setToast }) {
 
 
 function OfflineStatusBanner({ isOnline, lastSyncedAt, offlineNotice }) {
+  const [visible, setVisible] = useState(false);
   const icon = isOnline ? <Wifi size={18} /> : <WifiOff size={18} />;
   const title = isOnline ? 'Online' : 'Offline mode';
   const body = isOnline
     ? 'Connected. Latest outing data can sync normally.'
     : 'You are offline. The app is showing the last synced data when available. New saves, uploads, invites, approvals, and downloads are blocked until the connection returns.';
+  const shouldRender = !isOnline || Boolean(offlineNotice) || Boolean(lastSyncedAt);
+  const bannerStateKey = `${isOnline ? 'online' : 'offline'}|${lastSyncedAt || ''}|${offlineNotice || ''}`;
 
-  if (isOnline && !offlineNotice && !lastSyncedAt) return null;
+  useEffect(() => {
+    if (!shouldRender) {
+      setVisible(false);
+      return undefined;
+    }
+
+    setVisible(true);
+    const timer = window.setTimeout(() => setVisible(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [bannerStateKey, shouldRender]);
+
+  if (!shouldRender || !visible) return null;
 
   return (
-    <div className={`border-b ${isOnline ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
+    <div
+      className={`border-b transition-opacity duration-300 ${isOnline ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-950'}`}
+      role="status"
+      aria-live="polite"
+    >
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm sm:px-6 lg:px-8">
         <div className="flex items-start gap-3">
           <div className={`mt-0.5 rounded-full p-2 ${isOnline ? 'bg-emerald-100' : 'bg-amber-100'}`}>{icon}</div>

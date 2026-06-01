@@ -81,3 +81,39 @@ Vercel should redeploy the frontend automatically after the push. Render does no
 12. Confirm the receipt link opens.
 13. Test `Sync now` manually with another draft.
 14. Delete a draft with a receipt and confirm it disappears from the queue.
+
+---
+
+# Status Banner Auto-Hide Hotfix
+
+The online/offline status ribbon now appears for 5 seconds and then hides automatically.
+
+It reappears whenever the sync state changes, including:
+
+- app comes online
+- app goes offline
+- latest data refreshes and updates the last synced time
+- an offline/cache notice changes
+
+The compact Online/Offline chip in the header remains visible at all times so users can still see the current connection state without the full ribbon taking screen space.
+
+## Changed file
+
+```text
+client/src/App.jsx
+```
+
+## Deploy steps
+
+```powershell
+cd C:\Users\ksath\Downloads\team-outing-expense-tracker-mobile-pwa\team-outing-expense-tracker
+
+git status
+
+git add -A
+
+git commit -m "Auto-hide online offline status banner"
+
+git push origin main
+```
+
