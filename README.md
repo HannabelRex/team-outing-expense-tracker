@@ -56,4 +56,23 @@ Key additions:
 - Resend email action for pending invites
 - Audit entries for sent/failed/resend email actions
 
+## Phase 10: Receipt Storage Cleanup
 
+The backend now cleans up old Supabase Storage receipt files when receipts are no longer referenced by app data. This prevents orphaned JPG/PNG/WebP/PDF files from accumulating in the `receipts` bucket.
+
+Key additions:
+
+- Delete linked receipt file when an expense is deleted
+- Delete old receipt file when a receipt is replaced or removed
+- Clean up receipt references during draft event deletion
+- Add receipt cleanup audit entries
+- Log cleanup success/failure safely in Render
+- Add `receiptCleanup` status to `/api/health`
+
+Files changed for Phase 10:
+
+```text
+server/src/index.js
+docs/phase10-receipt-cleanup.md
+README.md
+```

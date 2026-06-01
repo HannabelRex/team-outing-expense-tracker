@@ -337,6 +337,160 @@ async function uploadReceiptToSupabase({ fileName, contentType, base64 }) {
   };
 }
 
+
+function encodedStoragePath(storagePath = '') {
+  return String(storagePath)
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function receiptStoragePath(receipt = null) {
+  if (!receipt) return '';
+
+  if (typeof receipt === 'string') {
+    const value = receipt.trim();
+    if (!value) return '';
+    if (!value.startsWith('http')) return value.replace(/^\/+/, '');
+    return receiptStoragePath({ url: value });
+  }
+
+  if (receipt.storagePath) return String(receipt.storagePath).replace(/^\/+/, '');
+  if (!receipt.url) return '';
+
+  try {
+    const parsedUrl = new URL(receipt.url);
+    const marker = `/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/`;
+    const privateMarker = `/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/`;
+    let path = '';
+
+    if (parsedUrl.pathname.includes(marker)) {
+      path = parsedUrl.pathname.split(marker)[1] || '';
+    } else if (parsedUrl.pathname.includes(privateMarker)) {
+      path = parsedUrl.pathname.split(privateMarker)[1] || '';
+    }
+
+    return path ? decodeURIComponent(path).replace(/^\/+/, '') : '';
+  } catch {
+    return '';
+  }
+}
+
+function sameReceiptReference(left = null, right = null) {
+  const leftPath = receiptStoragePath(left);
+  const rightPath = receiptStoragePath(right);
+  if (leftPath || rightPath) return leftPath === rightPath;
+  return (left?.id || left?.url || '') === (right?.id || right?.url || '');
+}
+
+function receiptFileName(receipt = null) {
+  if (!receipt) return '';
+  if (typeof receipt === 'string') return receipt.split('/').pop() || 'receipt';
+  return receipt.fileName || receipt.name || receiptStoragePath(receipt).split('/').pop() || 'receipt';
+}
+
+async function deleteReceiptFromSupabase(receipt = null) {
+  const storagePath = receiptStoragePath(receipt);
+  if (!storagePath) {
+    return { status: 'skipped', reason: 'no-storage-path', storagePath: '' };
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    const error = new Error('Receipt storage cleanup skipped because Supabase storage is not configured.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const deleteUrl = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${encodedStoragePath(storagePath)}`;
+  const response = await fetch(deleteUrl, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVICE_ROLE_KEY
+    }
+  });
+
+  if (!response.ok && response.status !== 404) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(`Receipt cleanup failed. ${body || response.statusText}`);
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return {
+    status: response.status === 404 ? 'not-found' : 'deleted',
+    storagePath,
+    fileName: receiptFileName(receipt)
+  };
+}
+
+async function cleanupReceiptFile(eventRecord, user, receipt, reason, details = {}) {
+  const storagePath = receiptStoragePath(receipt);
+  if (!storagePath) return { status: 'skipped', reason: 'no-storage-path' };
+
+  try {
+    const result = await deleteReceiptFromSupabase(receipt);
+    console.log('Receipt cleanup completed', {
+      status: result.status,
+      reason,
+      storagePath: result.storagePath,
+      fileName: result.fileName
+    });
+
+    addAuditLog(
+      eventRecord,
+      user,
+      result.status === 'not-found' ? 'receipt.cleanup_not_found' : 'receipt.deleted',
+      'receipt',
+      result.status === 'not-found'
+        ? `Receipt file was already missing for ${receiptFileName(receipt)}.`
+        : `Deleted receipt file ${receiptFileName(receipt)} from storage.`,
+      {
+        ...details,
+        reason,
+        cleanupStatus: result.status,
+        storagePath: result.storagePath,
+        fileName: result.fileName
+      }
+    );
+
+    return result;
+  } catch (error) {
+    console.warn('Receipt cleanup failed', {
+      reason,
+      storagePath,
+      fileName: receiptFileName(receipt),
+      message: error.message,
+      statusCode: error.statusCode
+    });
+
+    addAuditLog(eventRecord, user, 'receipt.delete_failed', 'receipt', `Receipt file cleanup failed for ${receiptFileName(receipt)}.`, {
+      ...details,
+      reason,
+      storagePath,
+      fileName: receiptFileName(receipt),
+      error: error.message
+    });
+
+    return { status: 'failed', reason, storagePath, error: error.message };
+  }
+}
+
+function collectReceiptReferences(eventRecord = {}) {
+  const byPath = new Map();
+  for (const expense of eventRecord.expenses || []) {
+    if (!expense?.receipt) continue;
+    const storagePath = receiptStoragePath(expense.receipt);
+    if (!storagePath || byPath.has(storagePath)) continue;
+    byPath.set(storagePath, {
+      receipt: expense.receipt,
+      expenseId: expense.id,
+      expenseTitle: expense.title || ''
+    });
+  }
+  return [...byPath.values()];
+}
+
 function ensureUsers(data) {
   if (!Array.isArray(data.users)) data.users = [];
   return data.users;
@@ -691,6 +845,7 @@ app.get('/api/health', (req, res) => {
     app: 'Team Outing Expense Tracker',
     storage: process.env.DATABASE_URL ? 'postgres' : 'local-json',
     receiptStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'not-configured',
+    receiptCleanup: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? 'enabled' : 'not-configured',
     auth: AUTH_REQUIRED ? 'required' : 'disabled',
     multiEvent: 'enabled',
     memberEventScoping: 'enabled',
@@ -1157,11 +1312,25 @@ app.delete('/api/events/:id', asyncHandler(async (req, res) => {
   if (data.events.length <= 1) return res.status(409).json({ error: 'You must keep at least one event.' });
   const eventRecord = requireExistingItem(data.events.find((record) => record.id === req.params.id), 'Event');
   if (eventRecord.expenses.length > 0) return res.status(409).json({ error: 'Delete is blocked for events that already have expenses. Archive it instead.' });
+  const receiptsToCleanup = collectReceiptReferences(eventRecord);
   data.events = data.events.filter((record) => record.id !== req.params.id);
   if (data.activeEventId === req.params.id) data.activeEventId = data.events[0].id;
   const auditEvent = data.events[0];
   addAuditLog(auditEvent, currentUser, 'event.deleted', 'event', `Deleted draft event ${eventRecord.event.name}.`, { deletedEventId: eventRecord.id, deletedEventName: eventRecord.event.name });
   await writeStore(data);
+
+  let cleanupAuditAdded = false;
+  for (const item of receiptsToCleanup) {
+    const result = await cleanupReceiptFile(auditEvent, currentUser, item.receipt, 'event-deleted', {
+      deletedEventId: eventRecord.id,
+      deletedEventName: eventRecord.event.name,
+      expenseId: item.expenseId,
+      expenseTitle: item.expenseTitle
+    });
+    cleanupAuditAdded = cleanupAuditAdded || result.status !== 'skipped';
+  }
+
+  if (cleanupAuditAdded) await writeStore(data);
   res.status(204).send();
 }));
 
@@ -1461,12 +1630,18 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
     return res.status(409).json({ error: 'This expense is tied to completed settlements. Confirm before editing.' });
   }
 
-  const beforeExpense = { ...expense };
+  const beforeExpense = {
+    ...expense,
+    receipt: expense.receipt && typeof expense.receipt === 'object' && !Array.isArray(expense.receipt)
+      ? { ...expense.receipt }
+      : expense.receipt
+  };
   const nextExpense = {
     ...expense,
     ...req.body,
     amount: roundMoney(Number(req.body.amount ?? expense.amount))
   };
+  const shouldCleanupOldReceipt = Boolean(beforeExpense.receipt) && !sameReceiptReference(beforeExpense.receipt, nextExpense.receipt);
 
   validateExpensePayload(nextExpense);
   assertMemberExpenseParticipant(activeEvent, currentUser, nextExpense);
@@ -1478,10 +1653,23 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
     beforeStatus: beforeExpense.approvalStatus,
     afterStatus: expense.approvalStatus,
     beforePaidBy: participantLabel(activeEvent, beforeExpense.paidByParticipantId),
-    afterPaidBy: participantLabel(activeEvent, expense.paidByParticipantId)
+    afterPaidBy: participantLabel(activeEvent, expense.paidByParticipantId),
+    beforeReceiptFileName: beforeExpense.receipt?.fileName || '',
+    afterReceiptFileName: expense.receipt?.fileName || ''
   });
   syncSettlements(activeEvent);
   await writeStore(data);
+
+  if (shouldCleanupOldReceipt) {
+    const cleanupResult = await cleanupReceiptFile(activeEvent, currentUser, beforeExpense.receipt, expense.receipt ? 'receipt-replaced' : 'receipt-removed', {
+      expenseId: expense.id,
+      expenseTitle: expense.title,
+      replacementReceiptFileName: expense.receipt?.fileName || '',
+      replacementStoragePath: receiptStoragePath(expense.receipt)
+    });
+    if (cleanupResult.status !== 'skipped') await writeStore(data);
+  }
+
   res.json(expense);
 }));
 
@@ -1503,9 +1691,22 @@ app.delete('/api/expenses/:id', asyncHandler(async (req, res) => {
 
   const removedExpense = expense;
   activeEvent.expenses = activeEvent.expenses.filter((item) => item.id !== req.params.id);
-  addAuditLog(activeEvent, currentUser, 'expense.deleted', 'expense', `Deleted expense ${removedExpense.title}.`, { expenseId: removedExpense.id, amount: removedExpense.amount });
+  addAuditLog(activeEvent, currentUser, 'expense.deleted', 'expense', `Deleted expense ${removedExpense.title}.`, {
+    expenseId: removedExpense.id,
+    amount: removedExpense.amount,
+    receiptFileName: removedExpense.receipt?.fileName || ''
+  });
   syncSettlements(activeEvent);
   await writeStore(data);
+
+  if (removedExpense.receipt) {
+    const cleanupResult = await cleanupReceiptFile(activeEvent, currentUser, removedExpense.receipt, 'expense-deleted', {
+      expenseId: removedExpense.id,
+      expenseTitle: removedExpense.title
+    });
+    if (cleanupResult.status !== 'skipped') await writeStore(data);
+  }
+
   res.status(204).send();
 }));
 
