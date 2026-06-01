@@ -299,10 +299,17 @@ async function supabaseAuthRequest(path, payload, extra = {}) {
 
 function AuthScreen({ onSession, setToast }) {
   const [recoverySession] = useState(() => readRecoverySessionFromUrl());
-  const [mode, setMode] = useState(() => recoverySession ? 'reset' : 'login');
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '' });
+  const [inviteContext] = useState(() => {
+    const params = new URLSearchParams(window.location.search || '');
+    return {
+      token: params.get('invite') || '',
+      email: params.get('email') || ''
+    };
+  });
+  const [mode, setMode] = useState(() => recoverySession ? 'reset' : inviteContext.token ? 'signup' : 'login');
+  const [form, setForm] = useState(() => ({ name: '', email: inviteContext.email || '', password: '', confirmPassword: '' }));
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(() => inviteContext.token ? 'You opened an invite link. Create an account with the invited email, or sign in if you already have one.' : '');
 
   async function submit(event) {
     event.preventDefault();
@@ -355,8 +362,19 @@ function AuthScreen({ onSession, setToast }) {
       }
 
       onSession(session);
-      setToast(mode === 'signup' ? 'Account created and signed in.' : 'Signed in successfully.');
-      if (mode === 'signup') {
+      if (inviteContext.token && session.access_token) {
+        setApiAccessToken(session.access_token);
+        try {
+          await api('/invitations/accept', { method: 'POST', body: JSON.stringify({ token: inviteContext.token }) });
+          window.history.replaceState(null, '', window.location.pathname);
+          setToast('Invite accepted. Your outing access is linked. Look at that, onboarding without spreadsheet gymnastics.');
+        } catch (inviteError) {
+          setToast(inviteError.message || 'Signed in, but the invite could not be accepted.');
+        }
+      } else {
+        setToast(mode === 'signup' ? 'Account created and signed in.' : 'Signed in successfully.');
+      }
+      if (mode === 'signup' || inviteContext.token) {
         window.setTimeout(() => window.location.reload(), 350);
       }
     } catch (err) {
@@ -1678,6 +1696,140 @@ function InstallAppButton({ setToast }) {
   );
 }
 
+
+function InvitationsManager({ data, reload, setToast }) {
+  const invitations = data.invitations || [];
+  const events = data.eventList || [];
+  const defaultEventId = data.activeEventId || events[0]?.id || '';
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    role: 'member',
+    eventId: defaultEventId
+  });
+  const [busy, setBusy] = useState(false);
+  const [copiedId, setCopiedId] = useState('');
+
+  useEffect(() => {
+    if (!form.eventId && defaultEventId) setForm((current) => ({ ...current, eventId: defaultEventId }));
+  }, [defaultEventId]);
+
+  async function createInvite(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const invite = await api('/invitations', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...form,
+          email: form.email.trim().toLowerCase()
+        })
+      });
+      setToast(invite.status === 'accepted'
+        ? 'Existing user assigned to the event.'
+        : 'Invite created and participant tagged. Copy the invite link and send it manually for now.');
+      setForm({ name: '', email: '', role: 'member', eventId: form.eventId });
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeInvite(invite) {
+    if (!window.confirm(`Revoke invite for ${invite.email}?`)) return;
+    setBusy(true);
+    try {
+      await api(`/invitations/${invite.id}/revoke`, { method: 'POST' });
+      setToast('Invite revoked. The welcome mat has been rolled back up.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyInvite(invite) {
+    if (!invite.inviteUrl) {
+      setToast('Invite link is missing. That is very rude of the data layer.');
+      return;
+    }
+    await navigator.clipboard.writeText(invite.inviteUrl);
+    setCopiedId(invite.id);
+    setToast('Invite link copied. Paste it into chat/email and pretend SMTP works.');
+    window.setTimeout(() => setCopiedId(''), 1800);
+  }
+
+  return (
+    <Section title="User invitations and event assignment" icon={Users}>
+      <div className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-100">
+        Invite users, assign their role, and tag them to an outing in one step. The participant is auto-created for the selected event, because manually matching emails forever is how bugs hatch.
+      </div>
+      <form className="grid gap-3 rounded-3xl bg-white p-4 ring-1 ring-slate-100 md:grid-cols-5" onSubmit={createInvite}>
+        <label className="field-label md:col-span-1">Name
+          <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Participant name" />
+        </label>
+        <label className="field-label md:col-span-1">Email
+          <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="user@example.com" required />
+        </label>
+        <label className="field-label">Role
+          <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+            <option value="member">Member</option>
+            <option value="finance">Finance</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <label className="field-label">Assign to event
+          <select className="input" value={form.eventId} onChange={(e) => setForm({ ...form, eventId: e.target.value })} required>
+            {events.map((eventItem) => <option key={eventItem.id} value={eventItem.id}>{eventItem.name}</option>)}
+          </select>
+        </label>
+        <div className="flex items-end">
+          <button className="btn-primary w-full justify-center" type="submit" disabled={busy || events.length === 0}>{busy ? 'Creating...' : 'Create invite'}</button>
+        </div>
+      </form>
+
+      <div className="mt-5 overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr className="text-left text-slate-500">
+              <th className="p-3">Email</th>
+              <th className="p-3">Name</th>
+              <th className="p-3">Role</th>
+              <th className="p-3">Event</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Invite link</th>
+              <th className="p-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invitations.length === 0 ? (
+              <tr><td className="p-3 text-slate-500" colSpan="7">No invites yet.</td></tr>
+            ) : invitations.map((invite) => (
+              <tr key={invite.id} className="border-t border-slate-100">
+                <td className="p-3 font-semibold text-slate-800">{invite.email}</td>
+                <td className="p-3 text-slate-600">{invite.name || '-'}</td>
+                <td className="p-3"><span className={statusBadge(invite.role)}>{invite.role}</span></td>
+                <td className="p-3 text-slate-600">{invite.eventName || '-'}</td>
+                <td className="p-3"><span className={statusBadge(invite.status === 'accepted' ? 'approved' : invite.status === 'revoked' ? 'rejected' : 'pending')}>{invite.status}</span></td>
+                <td className="p-3 max-w-xs truncate text-slate-500">{invite.inviteUrl || '-'}</td>
+                <td className="p-3">
+                  <div className="flex flex-wrap gap-2">
+                    {invite.inviteUrl && invite.status === 'pending' && <button className="btn-ghost" type="button" onClick={() => copyInvite(invite)}>{copiedId === invite.id ? 'Copied' : 'Copy link'}</button>}
+                    {invite.status === 'pending' && <button className="btn-ghost text-rose-700" type="button" disabled={busy} onClick={() => revokeInvite(invite)}>Revoke</button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+  );
+}
+
 function Roles({ data, reload, setToast }) {
   const [busyUserId, setBusyUserId] = useState('');
   const currentUser = data.currentUser;
@@ -1757,6 +1909,8 @@ function Roles({ data, reload, setToast }) {
           ))}
         </div>
       </Section>
+
+      {currentUser?.role === 'admin' && <InvitationsManager data={data} reload={reload} setToast={setToast} />}
 
       <Section title="User access" icon={Users}>
         <div className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-100">

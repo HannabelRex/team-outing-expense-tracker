@@ -358,6 +358,111 @@ function publicUser(user) {
   };
 }
 
+function ensureInvitations(data) {
+  if (!Array.isArray(data.invitations)) data.invitations = [];
+  return data.invitations;
+}
+
+function publicInvitation(invite = {}, data = {}) {
+  normalizeMultiEventStore(data);
+  const eventRecord = data.events?.find((record) => record.id === invite.eventId);
+  return {
+    id: invite.id,
+    email: invite.email,
+    name: invite.name || '',
+    role: invite.role || 'member',
+    eventId: invite.eventId || '',
+    eventName: invite.eventName || eventRecord?.event?.name || '',
+    participantId: invite.participantId || '',
+    status: invite.status || 'pending',
+    inviteUrl: invite.inviteUrl || '',
+    createdByUserId: invite.createdByUserId || '',
+    createdByName: invite.createdByName || '',
+    createdAt: invite.createdAt || '',
+    acceptedAt: invite.acceptedAt || null,
+    acceptedByUserId: invite.acceptedByUserId || '',
+    revokedAt: invite.revokedAt || null,
+    revokedByUserId: invite.revokedByUserId || ''
+  };
+}
+
+function findInvitationByToken(data, token) {
+  const normalizedToken = String(token || '').trim();
+  if (!normalizedToken) return null;
+  return ensureInvitations(data).find((invite) => invite.token === normalizedToken) || null;
+}
+
+function createInviteUrl(token, email) {
+  const baseUrl = (CLIENT_URLS[0] || '').replace(/\/+$/, '');
+  if (!baseUrl) return '';
+  const params = new URLSearchParams({ invite: token });
+  if (email) params.set('email', email);
+  return `${baseUrl}?${params.toString()}`;
+}
+
+function addParticipantForInvite(eventRecord, invite, user = null) {
+  eventRecord.participants = Array.isArray(eventRecord.participants) ? eventRecord.participants : [];
+  const normalizedEmail = normalizeIdentity(invite.email);
+  let participant = eventRecord.participants.find((item) => {
+    const email = normalizeIdentity(item.email || item.emailOrPhone);
+    return email === normalizedEmail || contactTokens(item.emailOrPhone).includes(normalizedEmail);
+  });
+
+  if (!participant) {
+    participant = {
+      id: `p-${nanoid(8)}`,
+      name: invite.name || normalizedEmail.split('@')[0] || 'Invited participant',
+      email: invite.email,
+      emailOrPhone: invite.email,
+      attendanceStatus: 'attending',
+      paymentStatus: 'pending',
+      amountPaid: 0,
+      amountOwed: 0,
+      invitedByUserId: invite.createdByUserId || '',
+      invitedAt: invite.createdAt || new Date().toISOString()
+    };
+    eventRecord.participants.push(participant);
+  } else {
+    if (!participant.email) participant.email = invite.email;
+    if (!participant.emailOrPhone) participant.emailOrPhone = invite.email;
+    if (invite.name && !participant.name) participant.name = invite.name;
+  }
+
+  if (user) {
+    participant.userId = user.id;
+    participant.authUserId = user.authUserId || user.authUserId;
+  }
+
+  invite.participantId = participant.id;
+  return participant;
+}
+
+function acceptMatchingInvitesForUser(data, user) {
+  normalizeMultiEventStore(data);
+  const normalizedEmail = normalizeIdentity(user.email);
+  if (!normalizedEmail) return [];
+  const accepted = [];
+  for (const invite of ensureInvitations(data)) {
+    if (invite.status !== 'pending') continue;
+    if (normalizeIdentity(invite.email) !== normalizedEmail) continue;
+    const eventRecord = data.events.find((record) => record.id === invite.eventId);
+    if (!eventRecord) continue;
+    invite.status = 'accepted';
+    invite.acceptedAt = new Date().toISOString();
+    invite.acceptedByUserId = user.id;
+    user.role = invite.role || user.role || 'member';
+    user.accessStatus = 'active';
+    addParticipantForInvite(eventRecord, invite, user);
+    addAuditLog(eventRecord, user, 'invite.accepted', 'invitation', `Accepted invite for ${invite.email}.`, {
+      inviteId: invite.id,
+      role: invite.role,
+      eventId: invite.eventId
+    });
+    accepted.push(invite);
+  }
+  return accepted;
+}
+
 function userHasAccess(user) {
   return (user?.accessStatus || 'active') !== 'disabled';
 }
@@ -441,6 +546,7 @@ function resolveAppUser(data, authUser) {
     error.statusCode = 403;
     throw error;
   }
+  acceptMatchingInvitesForUser(data, user);
   user.lastLoginAt = new Date().toISOString();
   return user;
 }
@@ -535,7 +641,10 @@ async function authEmailExists(email) {
   const data = await readStore();
   normalizeMultiEventStore(data);
   const localUsers = ensureUsers(data);
-  if (localUsers.some((user) => String(user.email || '').trim().toLowerCase() === normalizedEmail)) {
+  const localUser = localUsers.find((user) => String(user.email || '').trim().toLowerCase() === normalizedEmail);
+  // Pending invites create local placeholder users before the Supabase Auth account exists.
+  // Do not block invited users from creating the actual login account.
+  if (localUser?.authUserId) {
     return true;
   }
 
@@ -594,6 +703,9 @@ app.get('/api/health', (req, res) => {
     financeBudgetManagement: 'enabled',
     duplicateSignupProtection: 'enabled',
     singleAccountPerEmail: 'enabled',
+    userInvitations: 'enabled',
+    inviteLinks: 'manual-copy',
+    inviteAutoParticipantTagging: 'enabled',
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
   });
 });
@@ -606,6 +718,116 @@ app.get('/api/me', asyncHandler(async (req, res) => {
   const user = resolveAppUser(data, req.authUser);
   await writeStore(data);
   res.json(publicUser(user));
+}));
+
+app.get('/api/invitations', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  await writeStore(data);
+  res.json(ensureInvitations(data).map((invite) => publicInvitation(invite, data)).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)));
+}));
+
+app.post('/api/invitations', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const name = String(req.body.name || '').trim();
+  const role = req.body.role || 'member';
+  const eventId = req.body.eventId || data.activeEventId;
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Invite email is required.' });
+  if (!['admin', 'member', 'finance'].includes(role)) return res.status(400).json({ error: 'Invite role must be admin, member, or finance.' });
+
+  const eventRecord = requireExistingItem(data.events.find((record) => record.id === eventId), 'Event');
+  assertActiveEventEditable(eventRecord);
+  const invitations = ensureInvitations(data);
+  const existingPending = invitations.find((invite) => invite.status === 'pending' && normalizeIdentity(invite.email) === email && invite.eventId === eventRecord.id);
+  if (existingPending) {
+    existingPending.inviteUrl = existingPending.inviteUrl || createInviteUrl(existingPending.token, existingPending.email);
+    return res.status(200).json(publicInvitation(existingPending, data));
+  }
+
+  const users = ensureUsers(data);
+  let user = users.find((item) => normalizeIdentity(item.email) === email);
+  if (!user) {
+    user = {
+      id: `u-${nanoid(8)}`,
+      name: name || email.split('@')[0],
+      email,
+      role,
+      accessStatus: 'invited',
+      createdAt: new Date().toISOString()
+    };
+    users.push(user);
+  } else {
+    user.role = role;
+    user.accessStatus = user.accessStatus === 'disabled' ? 'disabled' : 'active';
+    if (name && !user.name) user.name = name;
+  }
+
+  const token = nanoid(24);
+  const invite = {
+    id: `inv-${nanoid(8)}`,
+    token,
+    email,
+    name: name || user.name || email.split('@')[0],
+    role,
+    eventId: eventRecord.id,
+    eventName: eventRecord.event.name,
+    status: user.authUserId ? 'accepted' : 'pending',
+    createdByUserId: currentUser.id,
+    createdByName: currentUser.name || currentUser.email,
+    createdAt: new Date().toISOString(),
+    acceptedAt: user.authUserId ? new Date().toISOString() : null,
+    acceptedByUserId: user.authUserId ? user.id : '',
+    inviteUrl: createInviteUrl(token, email)
+  };
+  addParticipantForInvite(eventRecord, invite, user.authUserId ? user : null);
+  invitations.push(invite);
+  addAuditLog(eventRecord, currentUser, 'invite.created', 'invitation', `Created invite for ${email}.`, {
+    inviteId: invite.id,
+    email,
+    role,
+    status: invite.status,
+    participantId: invite.participantId
+  });
+  await writeStore(data);
+  res.status(201).json(publicInvitation(invite, data));
+}));
+
+app.post('/api/invitations/accept', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const invite = findInvitationByToken(data, req.body.token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found or already expired.' });
+  if (invite.status !== 'pending') return res.json(publicInvitation(invite, data));
+  if (normalizeIdentity(invite.email) !== normalizeIdentity(currentUser.email)) {
+    return res.status(403).json({ error: 'This invite belongs to a different email address. Use the invited email to sign in.' });
+  }
+  const accepted = acceptMatchingInvitesForUser(data, currentUser);
+  await writeStore(data);
+  res.json({ accepted: accepted.map((item) => publicInvitation(item, data)) });
+}));
+
+app.post('/api/invitations/:id/revoke', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const invite = requireExistingItem(findById(ensureInvitations(data), req.params.id), 'Invitation');
+  if (invite.status === 'accepted') return res.status(409).json({ error: 'Accepted invites cannot be revoked. Remove app access from the user instead.' });
+  invite.status = 'revoked';
+  invite.revokedAt = new Date().toISOString();
+  invite.revokedByUserId = currentUser.id;
+  const eventRecord = data.events.find((record) => record.id === invite.eventId) || currentEventForAudit(data, currentUser);
+  addAuditLog(eventRecord, currentUser, 'invite.revoked', 'invitation', `Revoked invite for ${invite.email}.`, { inviteId: invite.id, email: invite.email });
+  await writeStore(data);
+  res.json(publicInvitation(invite, data));
 }));
 
 app.get('/api/users', asyncHandler(async (req, res) => {
@@ -748,6 +970,7 @@ app.get('/api/bootstrap', asyncHandler(async (req, res) => {
     eventList,
     currentUser: publicUser(currentUser),
     users: ensureUsers(data).map(publicUser),
+    invitations: ['admin', 'finance'].includes(currentUser.role) ? ensureInvitations(data).map((invite) => publicInvitation(invite, data)) : [],
     dashboard,
     settlementPlan
   });

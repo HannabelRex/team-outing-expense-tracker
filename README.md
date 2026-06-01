@@ -310,3 +310,13 @@ Health flags:
   "singleAccountPerEmail": "enabled"
 }
 ```
+
+## Phase 8: User Invitations and Event Assignment
+
+Phase 8 adds an invitation workflow in the Roles tab. Admins can invite users by email, assign a role, choose an event, auto-create the participant record, copy a manual invite link, and revoke pending invites. Invite acceptance is tied to the invited email and is recorded in the audit log.
+
+Health flags added:
+
+- `userInvitations: enabled`
+- `inviteLinks: manual-copy`
+- `inviteAutoParticipantTagging: enabled`
