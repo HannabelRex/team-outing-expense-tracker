@@ -1537,6 +1537,15 @@ function notificationRecipients(eventRecord, body = {}) {
 function getMailer() {
   if (!EMAIL_NOTIFICATIONS_ENABLED) return null;
   if (!cachedMailer) {
+    console.log('SMTP config loaded', {
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      userConfigured: Boolean(SMTP_USER),
+      passConfigured: Boolean(SMTP_PASS),
+      fromConfigured: Boolean(SMTP_FROM)
+    });
+
     cachedMailer = nodemailer.createTransport({
       host: SMTP_HOST,
       port: SMTP_PORT,
@@ -1594,6 +1603,15 @@ async function sendNotificationEmails(notification, eventRecord) {
       recipient.sentAt = new Date().toISOString();
       delete recipient.error;
     } catch (error) {
+      console.error('SMTP email failed', {
+        to: recipient.email,
+        message: error.message,
+        code: error.code,
+        command: error.command,
+        response: error.response,
+        responseCode: error.responseCode
+      });
+
       recipient.deliveryStatus = 'failed';
       recipient.error = error.message;
     }
