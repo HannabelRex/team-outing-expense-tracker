@@ -969,13 +969,6 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
   const inviteNotice = inviteContext.token
     ? 'Invite detected. Use the invited email to link your event access securely.'
     : 'Built for budgets, receipts, collections, settlements, and reports.';
-  const showcaseCards = [
-    { label: 'Budget planned', value: 'INR 1,00,000', icon: WalletCards, className: 'auth-float-one' },
-    { label: 'Receipts captured', value: '18 uploaded', icon: Receipt, className: 'auth-float-two' },
-    { label: 'Approvals pending', value: '4 reviews', icon: Bell, className: 'auth-float-three' },
-    { label: 'Settlements tracked', value: 'INR 12,500', icon: CheckCircle2, className: 'auth-float-four' }
-  ];
-
   return (
     <main className="auth-shell relative min-h-screen overflow-hidden px-4 py-8 text-slate-950 sm:px-6 lg:px-10">
       <div className="auth-aurora auth-aurora-one" />
@@ -1047,19 +1040,6 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
               </div>
             </div>
           </div>
-
-          {showcaseCards.map((card) => {
-            const Icon = card.icon;
-            return (
-              <div key={card.label} className={`auth-floating-card ${card.className}`}>
-                <div className="rounded-2xl bg-white/20 p-2 text-white ring-1 ring-white/25"><Icon size={18} /></div>
-                <div>
-                  <p className="text-[0.65rem] font-black uppercase tracking-[0.18em] text-white/60">{card.label}</p>
-                  <p className="text-sm font-black text-white">{card.value}</p>
-                </div>
-              </div>
-            );
-          })}
         </section>
 
         <section className="auth-form-wrap mx-auto w-full max-w-md">

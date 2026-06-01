@@ -462,3 +462,12 @@ No backend routes, database changes, or environment variables are required. Anim
 ## Login floating cards safe-space hotfix
 
 The glassmorphism login screen now keeps animated flyer cards in safer edge positions and behind the main content layer. The headline, form, and dashboard preview remain readable while the decorative budget/receipt/approval/settlement cards continue to animate in the empty visual spaces.
+
+
+## Phase / Hotfix Notes
+
+### Login Floating Cards Removed Hotfix
+
+- Removed the animated floating flyer cards from the glassmorphism login screen because they overlapped and hindered the showcase content.
+- Kept the premium login layout, aurora animation, SaaS snapshot, and login/signup/invite/reset flows intact.
+- Added documentation in `docs/login-floating-cards-removed-hotfix.md`.
