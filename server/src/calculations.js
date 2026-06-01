@@ -105,7 +105,8 @@ export function calculateExpenseShares(expense) {
   return [];
 }
 
-export function calculateDashboard(data) {
+export function calculateDashboard(data, options = {}) {
+  const includeSettlementPayments = options.includeSettlementPayments !== false;
   const approvedOrPendingExpenses = data.expenses.filter((expense) => expense.approvalStatus !== 'rejected');
   const totalBudget = roundMoney(Number(data.event.estimatedBudget || 0));
   const plannedBudget = roundMoney(data.categories.reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
@@ -149,10 +150,41 @@ export function calculateDashboard(data) {
     }
   }
 
+  const settlementPaidTotals = new Map();
+  const settlementReceivedTotals = new Map();
+
+  for (const participant of data.participants) {
+    settlementPaidTotals.set(participant.id, 0);
+    settlementReceivedTotals.set(participant.id, 0);
+  }
+
+  if (includeSettlementPayments) {
+    for (const settlement of data.settlements || []) {
+      const paidAmount = Math.min(
+        roundMoney(Number(settlement.paidAmount || 0)),
+        roundMoney(Number(settlement.amount || 0))
+      );
+
+      if (!Number.isFinite(paidAmount) || paidAmount <= 0) continue;
+
+      settlementPaidTotals.set(
+        settlement.fromParticipantId,
+        roundMoney((settlementPaidTotals.get(settlement.fromParticipantId) || 0) + paidAmount)
+      );
+      settlementReceivedTotals.set(
+        settlement.toParticipantId,
+        roundMoney((settlementReceivedTotals.get(settlement.toParticipantId) || 0) + paidAmount)
+      );
+    }
+  }
+
   const participantBalances = data.participants.map((participant) => {
     const amountPaid = roundMoney(paidTotals.get(participant.id) || 0);
     const amountOwed = roundMoney(owedTotals.get(participant.id) || 0);
-    const netBalance = roundMoney(amountPaid - amountOwed);
+    const settlementPaid = roundMoney(settlementPaidTotals.get(participant.id) || 0);
+    const settlementReceived = roundMoney(settlementReceivedTotals.get(participant.id) || 0);
+    const netBalanceBeforeSettlement = roundMoney(amountPaid - amountOwed);
+    const netBalance = roundMoney(netBalanceBeforeSettlement + settlementPaid - settlementReceived);
 
     return {
       participantId: participant.id,
@@ -162,6 +194,9 @@ export function calculateDashboard(data) {
       paymentStatus: netBalance === 0 ? 'settled' : participant.paymentStatus,
       amountPaid,
       amountOwed,
+      settlementPaid,
+      settlementReceived,
+      netBalanceBeforeSettlement,
       netBalance,
       role: participantMap.get(participant.id)?.role
     };
@@ -191,7 +226,7 @@ export function calculateDashboard(data) {
 }
 
 export function generateSettlementPlan(data) {
-  const dashboard = calculateDashboard(data);
+  const dashboard = calculateDashboard(data, { includeSettlementPayments: false });
   const existingSettlementMap = new Map(
     (data.settlements || []).map((settlement) => [`${settlement.fromParticipantId}->${settlement.toParticipantId}`, settlement])
   );

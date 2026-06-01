@@ -1140,6 +1140,7 @@ function Dashboard({ data, activeTheme }) {
   const chartTheme = useMemo(() => buildChartTheme(activeTheme), [activeTheme]);
   const axisProps = useMemo(() => themedAxisProps(chartTheme), [chartTheme]);
   const tooltipProps = useMemo(() => themedTooltipProps(chartTheme), [chartTheme]);
+  const hasSettlementPayments = dashboard.participantBalances.some((person) => Number(person.settlementPaid || 0) > 0 || Number(person.settlementReceived || 0) > 0);
 
   return (
     <div className="space-y-6">
@@ -1188,7 +1189,8 @@ function Dashboard({ data, activeTheme }) {
                   <th className="p-3">Participant</th>
                   <th className="p-3">Paid</th>
                   <th className="p-3">Owed</th>
-                  <th className="p-3">Net</th>
+                  {hasSettlementPayments && <th className="p-3">Settlement paid/received</th>}
+                  <th className="p-3">Net after settlements</th>
                 </tr>
               </thead>
               <tbody>
@@ -1197,7 +1199,18 @@ function Dashboard({ data, activeTheme }) {
                     <td className="p-3 font-semibold text-slate-800">{person.name}</td>
                     <td className="p-3">{money(person.amountPaid, currency)}</td>
                     <td className="p-3">{money(person.amountOwed, currency)}</td>
-                    <td className={`p-3 font-bold ${person.netBalance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>{money(person.netBalance, currency)}</td>
+                    {hasSettlementPayments && (
+                      <td className="p-3 text-xs text-slate-600">
+                        <div>{Number(person.settlementPaid || 0) > 0 ? `Paid ${money(person.settlementPaid, currency)}` : 'Paid —'}</div>
+                        <div>{Number(person.settlementReceived || 0) > 0 ? `Received ${money(person.settlementReceived, currency)}` : 'Received —'}</div>
+                      </td>
+                    )}
+                    <td className={`p-3 font-bold ${person.netBalance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {money(person.netBalance, currency)}
+                      {Number(person.netBalanceBeforeSettlement || 0) !== Number(person.netBalance || 0) && (
+                        <div className="text-xs font-semibold text-slate-400">Before settlement: {money(person.netBalanceBeforeSettlement, currency)}</div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
