@@ -976,8 +976,8 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
       <div className="auth-aurora auth-aurora-three" />
       <div className="auth-grid-overlay" />
 
-      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-7xl items-center gap-8 lg:grid-cols-[1.12fr_0.88fr]">
-        <section className="auth-showcase relative overflow-hidden rounded-[2rem] border border-white/35 bg-white/12 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8 lg:min-h-[680px] lg:p-10">
+      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-7xl items-center gap-8 lg:grid-cols-[0.88fr_1.12fr]">
+        <section className="auth-showcase order-2 relative overflow-hidden rounded-[2rem] border border-white/35 bg-white/12 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8 lg:min-h-[680px] lg:p-10">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.32),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.22),transparent_36%)]" />
           <div className="auth-route-line" />
           <div className="relative z-10 flex h-full flex-col justify-between gap-8">
@@ -1042,7 +1042,7 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
           </div>
         </section>
 
-        <section className="auth-form-wrap mx-auto w-full max-w-md">
+        <section className="auth-form-wrap order-1 mx-auto w-full max-w-md lg:mx-0">
           <div className="auth-form-card rounded-[2rem] border border-white/60 bg-white/72 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
             <div className="mb-6 flex items-start gap-4">
               <div className="auth-lock-badge rounded-3xl p-3 text-white shadow-lg"><LockKeyhole size={24} /></div>

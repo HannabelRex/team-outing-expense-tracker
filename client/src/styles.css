@@ -231,6 +231,11 @@
     animation-delay: 120ms;
   }
 
+  .auth-form-wrap {
+    position: relative;
+    z-index: 18;
+  }
+
   .auth-lock-badge,
   .auth-submit {
     background: linear-gradient(135deg, #2563eb 0%, #10b981 100%);
@@ -347,8 +352,21 @@
 
 @media (max-width: 640px) {
   .auth-shell {
-    padding-top: 1rem;
-    padding-bottom: 1rem;
+    min-height: 100svh;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .auth-shell > .relative.z-10 {
+    min-height: auto;
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .auth-form-wrap {
+    margin-left: 0;
+    margin-right: auto;
+    max-width: none;
   }
 
   .auth-showcase {

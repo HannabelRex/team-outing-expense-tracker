@@ -471,3 +471,8 @@ The glassmorphism login screen now keeps animated flyer cards in safer edge posi
 - Removed the animated floating flyer cards from the glassmorphism login screen because they overlapped and hindered the showcase content.
 - Kept the premium login layout, aurora animation, SaaS snapshot, and login/signup/invite/reset flows intact.
 - Added documentation in `docs/login-floating-cards-removed-hotfix.md`.
+
+
+## Login Mobile-First Layout Hotfix
+
+The login screen now prioritizes the sign-in card on mobile and places the login panel on the left side on larger screens. This avoids forcing mobile users to scroll past the product showcase before they can sign in. The animated glassmorphism background and SaaS preview remain available without blocking the login form.
