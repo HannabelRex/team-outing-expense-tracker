@@ -1366,6 +1366,7 @@ function AnalyticsDashboard({ data, activeTheme }) {
             <p className="mt-2 text-xl font-black text-slate-950">{expenses.length ? `${((receiptsAttached / expenses.length) * 100).toFixed(1)}%` : '0.0%'}</p>
             <p className="mt-1 text-sm text-slate-500">{receiptsAttached} of {expenses.length} expenses have receipts</p>
           </div>
+
         </div>
       </Section>
 
@@ -3626,6 +3627,7 @@ function DataManagement({ data, reload, setToast }) {
   const [restoreConfirmation, setRestoreConfirmation] = useState('');
   const [autoBackupStatus, setAutoBackupStatus] = useState(null);
   const [autoBackupError, setAutoBackupError] = useState('');
+  const [masterResetConfirmation, setMasterResetConfirmation] = useState('');
   const activeEventName = data.event?.name || 'current outing';
   const activeEventId = data.activeEventId;
   const autoBackupReady = Boolean(autoBackupStatus?.enabled && autoBackupStatus?.configured && autoBackupStatus?.cronSecretConfigured);
@@ -3782,6 +3784,33 @@ function DataManagement({ data, reload, setToast }) {
     }
   }
 
+  async function masterResetWorkspace() {
+    if (masterResetConfirmation !== 'MASTER RESET') {
+      setToast('Type MASTER RESET exactly. The danger zone is not accepting casual vibes today.');
+      return;
+    }
+
+    try {
+      setBusy('master-reset');
+      const result = await api('/admin/master-reset', {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: masterResetConfirmation })
+      });
+      setMasterResetConfirmation('');
+      setRestoreConfirmation('');
+      setRestoreBackup(null);
+      setRestoreSummary(null);
+      setRestoreFileName('');
+      setToast(`Workspace reset completed. Safety backup saved to ${result.backup?.bucket}/${result.backup?.path}.`);
+      await reload();
+      await loadAutoBackupStatus();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Section title="Data management" icon={ShieldCheck}>
@@ -3893,6 +3922,40 @@ function DataManagement({ data, reload, setToast }) {
                   <AlertTriangle size={16} className="inline" /> {busy === 'restore' ? 'Restoring...' : 'Restore backup'}
                 </button>
                 <button className="btn-ghost" type="button" onClick={clearRestoreSelection} disabled={busy === 'restore'}>Clear selection</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-red-200 bg-red-50 p-5 xl:col-span-2">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-red-800 p-2 text-white"><AlertTriangle size={18} /></div>
+              <div>
+                <h3 className="text-lg font-black text-red-950">Danger Zone: Reset workspace data</h3>
+                <p className="mt-1 text-sm text-red-800">This creates a safety backup first, then clears events, participants, expenses, settlements, budget collections, notifications, invitations, non-admin users, and old audit logs. Active admins are preserved and one reset audit entry is kept.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+              <div className="rounded-2xl bg-white p-4 text-sm text-slate-700 ring-1 ring-red-100">
+                <p className="font-black text-red-950">This is intentionally destructive.</p>
+                <ul className="mt-3 list-disc space-y-1 pl-5">
+                  <li>A full reset backup is saved to Supabase Storage before cleanup.</li>
+                  <li>All old event data and audit logs are removed from the active workspace.</li>
+                  <li>Only active Admin users remain in the app user list.</li>
+                  <li>Supabase Auth accounts are not deleted; removed users simply lose app access.</li>
+                </ul>
+                <p className="mt-3 text-xs font-bold text-red-700">Use this for demo cleanup or a fresh workspace start, not as a casual housekeeping button. It has teeth.</p>
+              </div>
+
+              <div className="rounded-2xl bg-white p-4 ring-1 ring-red-100">
+                <label className="field-label">
+                  Type MASTER RESET to confirm
+                  <input className="input" value={masterResetConfirmation} onChange={(e) => setMasterResetConfirmation(e.target.value)} placeholder="MASTER RESET" />
+                </label>
+                <button className="mt-4 w-full rounded-2xl bg-red-800 px-4 py-3 font-black text-white hover:bg-red-900 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={masterResetWorkspace} disabled={busy === 'master-reset' || masterResetConfirmation !== 'MASTER RESET' || !autoBackupStatus?.enabled || !autoBackupStatus?.configured}>
+                  <AlertTriangle size={16} className="inline" /> {busy === 'master-reset' ? 'Resetting workspace...' : 'Reset workspace data'}
+                </button>
+                {(!autoBackupStatus?.enabled || !autoBackupStatus?.configured) && <p className="mt-3 text-xs font-bold text-red-700">Automatic backup storage must be enabled and configured before reset is allowed. A destructive reset without a parachute is not happening.</p>}
               </div>
             </div>
           </div>

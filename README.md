@@ -403,3 +403,44 @@ collection.payment_deleted
 ```
 
 No new Render/Vercel environment variables are required.
+
+## Phase 18 - Admin Danger Zone Workspace Reset
+
+The Data tab now includes an Admin-only **Danger Zone: Reset workspace data** section.
+
+The reset flow is intentionally strict:
+
+- Admin must type `MASTER RESET`
+- Backend creates a full safety backup first in Supabase Storage
+- Backup is stored under `danger-zone/master-reset-backup-<timestamp>.json`
+- Active Admin users are preserved
+- Non-admin app users are removed from the app user list
+- Events, participants, expenses, settlements, budget collections, notifications, invitations, and old audit logs are cleared from the active workspace
+- A fresh blank event is created
+- One new audit entry is kept: `workspace.master_reset_completed`
+
+New backend API:
+
+```text
+POST /api/admin/master-reset
+```
+
+Request body:
+
+```json
+{
+  "confirmation": "MASTER RESET"
+}
+```
+
+The feature reuses the existing automatic backup storage configuration:
+
+```text
+AUTO_BACKUP_ENABLED=true
+AUTO_BACKUP_BUCKET=app-backups
+AUTO_BACKUP_MAX_BYTES=10485760
+SUPABASE_URL=<configured>
+SUPABASE_SERVICE_ROLE_KEY=<configured>
+```
+
+No Supabase Auth users are deleted. Removed Finance/Member users are deleted only from the application state, so they no longer have app access unless invited or created again.

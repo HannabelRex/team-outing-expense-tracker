@@ -1183,6 +1183,135 @@ function ensureCurrentAdminAfterRestore(restoredData, currentUser) {
   return restoredUser;
 }
 
+function resetBackupPath(now = new Date()) {
+  return `danger-zone/master-reset-backup-${backupFileStamp(now)}.json`;
+}
+
+function preserveAdminUsers(data, currentUser) {
+  const now = new Date().toISOString();
+  const users = ensureUsers(data);
+  const admins = users
+    .filter((user) => user.role === 'admin' && userHasAccess(user))
+    .map((user) => ({
+      ...user,
+      role: 'admin',
+      accessStatus: 'active',
+      disabledAt: null,
+      disabledByUserId: ''
+    }));
+
+  let currentAdmin = admins.find((user) => user.authUserId && user.authUserId === currentUser.authUserId)
+    || admins.find((user) => normalizeIdentity(user.email) === normalizeIdentity(currentUser.email));
+
+  if (!currentAdmin) {
+    currentAdmin = {
+      id: currentUser.id || `u-${nanoid(8)}`,
+      authUserId: currentUser.authUserId || '',
+      name: currentUser.name || currentUser.email || 'Reset admin',
+      email: currentUser.email || '',
+      role: 'admin',
+      accessStatus: 'active',
+      createdAt: currentUser.createdAt || now
+    };
+    admins.push(currentAdmin);
+  }
+
+  currentAdmin.authUserId = currentAdmin.authUserId || currentUser.authUserId || '';
+  currentAdmin.email = currentAdmin.email || currentUser.email || '';
+  currentAdmin.name = currentAdmin.name || currentUser.name || currentAdmin.email || 'Reset admin';
+  currentAdmin.role = 'admin';
+  currentAdmin.accessStatus = 'active';
+  currentAdmin.lastLoginAt = now;
+
+  const dedupedAdmins = [];
+  const seen = new Set();
+  for (const admin of admins) {
+    const key = admin.authUserId || normalizeIdentity(admin.email) || admin.id;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    dedupedAdmins.push(admin);
+  }
+
+  return { admins: dedupedAdmins, currentAdmin };
+}
+
+function buildCleanResetState(currentData, currentUser, backupInfo = {}) {
+  const now = new Date().toISOString();
+  const { admins, currentAdmin } = preserveAdminUsers(currentData, currentUser);
+  const cleanEvent = buildEventRecord({
+    status: 'active',
+    createdAt: now,
+    event: {
+      name: 'New Team Outing',
+      date: now.slice(0, 10),
+      location: 'TBD',
+      estimatedBudget: 0,
+      currency: 'INR',
+      settlementDeadline: '',
+      organizer: {
+        name: currentAdmin.name || currentAdmin.email || 'Admin',
+        email: currentAdmin.email || ''
+      }
+    },
+    participants: [],
+    categories: defaultCategories(),
+    expenses: [],
+    settlements: [],
+    budgetCollections: [],
+    notifications: [],
+    auditLog: []
+  });
+
+  const resetState = {
+    ...currentData,
+    events: [cleanEvent],
+    activeEventId: cleanEvent.id,
+    users: admins,
+    invitations: [],
+    updatedAt: now
+  };
+
+  addAuditLog(cleanEvent, currentAdmin, 'workspace.master_reset_completed', 'workspace', 'Admin reset workspace data after saving a full backup.', {
+    backupBucket: backupInfo.bucket || '',
+    backupPath: backupInfo.storagePath || backupInfo.path || '',
+    backupSizeBytes: backupInfo.sizeBytes || 0,
+    backupCreatedAt: backupInfo.uploadedAt || '',
+    preservedAdmins: admins.length,
+    resetAt: now,
+    cleared: {
+      events: true,
+      participants: true,
+      expenses: true,
+      settlements: true,
+      budgetCollections: true,
+      notifications: true,
+      invitations: true,
+      nonAdminUsers: true,
+      auditLogs: true
+    }
+  });
+
+  return { resetState, currentAdmin, cleanEvent };
+}
+
+async function createMasterResetBackup(data, currentUser) {
+  requireAutoBackupConfig();
+  const backup = buildFullBackup(data, currentUser);
+  backup.backupMode = 'master-reset-safety-backup';
+  backup.masterReset = {
+    resetRequestedAt: new Date().toISOString(),
+    backupPurpose: 'Safety copy created before Admin Danger Zone reset.'
+  };
+
+  const uploadResult = await uploadJsonBackupToSupabaseStorage({
+    bucket: AUTO_BACKUP_BUCKET,
+    storagePath: resetBackupPath(),
+    payload: backup
+  });
+
+  return uploadResult;
+}
+
 function sendJsonAttachment(res, fileName, payload) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -1321,7 +1450,8 @@ app.get('/api/health', (req, res) => {
     adminBackupRestore: 'enabled',
     dailyAutoBackup: AUTO_BACKUP_ENABLED ? 'enabled' : 'disabled',
     dailyAutoBackupStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? `${AUTO_BACKUP_BUCKET}/${AUTO_BACKUP_PATH}` : 'not-configured',
-    loginPerformanceOptimization: 'enabled'
+    loginPerformanceOptimization: 'enabled',
+    adminDangerZoneReset: 'enabled'
   });
 });
 
@@ -1438,6 +1568,39 @@ app.post('/api/admin/restore', asyncHandler(async (req, res) => {
 
   await writeStore(restoredData);
   res.json({ ok: true, restoredAt: new Date().toISOString(), summary: appStateSummary(restoredData) });
+}));
+
+app.post('/api/admin/master-reset', asyncHandler(async (req, res) => {
+  const currentData = await readStore();
+  normalizeMultiEventStore(currentData);
+  const currentUser = resolveAppUser(currentData, req.authUser);
+  requireRole(currentUser, ['admin']);
+
+  if (String(req.body.confirmation || '').trim() !== 'MASTER RESET') {
+    const error = new Error('Type MASTER RESET to confirm the workspace reset. This is the button with teeth.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const beforeSummary = appStateSummary(currentData);
+  const resetBackup = await createMasterResetBackup(currentData, currentUser);
+  const { resetState, currentAdmin } = buildCleanResetState(currentData, currentUser, resetBackup);
+  const afterSummary = appStateSummary(resetState);
+
+  await writeStore(resetState);
+  res.json({
+    ok: true,
+    resetAt: new Date().toISOString(),
+    backup: {
+      bucket: resetBackup.bucket,
+      path: resetBackup.storagePath,
+      sizeBytes: resetBackup.sizeBytes,
+      uploadedAt: resetBackup.uploadedAt
+    },
+    preservedAdmin: backupSafeUser(currentAdmin),
+    beforeSummary,
+    afterSummary
+  });
 }));
 
 app.get('/api/me', asyncHandler(async (req, res) => {
