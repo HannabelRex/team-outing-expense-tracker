@@ -1173,8 +1173,9 @@ function assertMemberExpenseParticipant(eventRecord, user, expense) {
 }
 
 
-async function authEmailExists(email) {
+async function authEmailExists(email, options = {}) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
+  const inviteToken = String(options.inviteToken || '').trim();
   if (!normalizedEmail || !normalizedEmail.includes('@')) {
     const error = new Error('Enter a valid email address.');
     error.statusCode = 400;
@@ -1185,8 +1186,21 @@ async function authEmailExists(email) {
   normalizeMultiEventStore(data);
   const localUsers = ensureUsers(data);
   const localUser = localUsers.find((user) => String(user.email || '').trim().toLowerCase() === normalizedEmail);
+  const matchingPendingInvite = inviteToken
+    ? findInvitationByToken(data, inviteToken)
+    : null;
+  const inviteMatchesEmail = matchingPendingInvite
+    && matchingPendingInvite.status === 'pending'
+    && normalizeIdentity(matchingPendingInvite.email) === normalizedEmail;
+
   // Pending invites create local placeholder users before the Supabase Auth account exists.
-  // Do not block invited users from creating the actual login account.
+  // If the invite matches and the placeholder has not been linked to Supabase Auth yet,
+  // allow the invited user to create the real login account instead of treating the
+  // placeholder as an existing account. Bureaucracy defeated, for once.
+  if (inviteMatchesEmail && !localUser?.authUserId) {
+    return false;
+  }
+
   if (localUser?.authUserId) {
     return true;
   }
@@ -1218,8 +1232,9 @@ async function authEmailExists(email) {
 
 app.post('/api/auth/check-email', asyncHandler(async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
-  const exists = await authEmailExists(email);
-  res.json({ exists, loginRecommended: exists });
+  const inviteToken = String(req.body.inviteToken || '').trim();
+  const exists = await authEmailExists(email, { inviteToken });
+  res.json({ exists, loginRecommended: exists, inviteAware: Boolean(inviteToken) });
 }));
 
 app.get('/api/health', (req, res) => {

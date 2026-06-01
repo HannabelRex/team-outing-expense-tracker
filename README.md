@@ -332,3 +332,8 @@ git push origin main
 ```
 
 Both Render and Vercel may redeploy because Phase 16 changes backend and frontend files.
+
+
+### Invite signup existing-account hotfix
+
+Invite-based signup is now invite-aware. When a user opens an invitation link and creates an account with the invited email, the app sends the invite token during the email-existence check. Pending invitation placeholder users no longer block first-time invited users from signing up. If the email is already linked to a real Supabase Auth login, the user is still redirected to sign in and accept the invite safely.

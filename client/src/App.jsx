@@ -691,15 +691,21 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
 
       if (mode === 'signup') {
         const normalizedEmail = form.email.trim().toLowerCase();
+        const invitedEmail = inviteContext.email ? inviteContext.email.trim().toLowerCase() : '';
+        if (inviteContext.token && invitedEmail && normalizedEmail !== invitedEmail) {
+          throw new Error('Use the invited email address to create this account. Tiny bureaucracy, but it keeps the invite secure.');
+        }
         const emailCheck = await api('/auth/check-email', {
           method: 'POST',
-          body: JSON.stringify({ email: normalizedEmail })
+          body: JSON.stringify({ email: normalizedEmail, inviteToken: inviteContext.token || '' })
         });
         if (emailCheck.exists) {
           setMode('login');
           setForm({ ...form, email: normalizedEmail, password: '', confirmPassword: '' });
-          setMessage('An account already exists with this email. Please sign in instead, or use Forgot password if you cannot remember the password.');
-          setToast('Account already exists. Redirected to sign in.');
+          setMessage(inviteContext.token
+            ? 'This invited email already has a login account. Sign in with this email to accept the invite, or use Forgot password if needed.'
+            : 'An account already exists with this email. Please sign in instead, or use Forgot password if you cannot remember the password.');
+          setToast(inviteContext.token ? 'Existing login found. Sign in to accept the invite.' : 'Account already exists. Redirected to sign in.');
           return;
         }
       }
