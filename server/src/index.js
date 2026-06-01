@@ -762,6 +762,158 @@ function publicAuditEntry(entry) {
   };
 }
 
+
+function backupFileStamp(value = new Date()) {
+  return value.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+}
+
+function backupSafeUser(user = {}) {
+  return {
+    id: user.id || '',
+    name: user.name || '',
+    email: user.email || '',
+    role: user.role || 'unknown'
+  };
+}
+
+function appStateSummary(data = {}) {
+  normalizeMultiEventStore(data);
+  return {
+    events: Array.isArray(data.events) ? data.events.length : 0,
+    users: Array.isArray(data.users) ? data.users.length : 0,
+    invitations: Array.isArray(data.invitations) ? data.invitations.length : 0,
+    totalExpenses: (data.events || []).reduce((sum, eventRecord) => sum + (eventRecord.expenses || []).length, 0),
+    totalParticipants: (data.events || []).reduce((sum, eventRecord) => sum + (eventRecord.participants || []).length, 0),
+    totalAuditEntries: (data.events || []).reduce((sum, eventRecord) => sum + (eventRecord.auditLog || []).length, 0)
+  };
+}
+
+function buildFullBackup(data, currentUser) {
+  const exportedAt = new Date().toISOString();
+  return {
+    backupType: 'team-outing-full-app-state',
+    backupVersion: 1,
+    app: 'Team Outing Expense Tracker',
+    exportedAt,
+    exportedBy: backupSafeUser(currentUser),
+    summary: appStateSummary(data),
+    data
+  };
+}
+
+function buildEventBackup(eventRecord, currentUser) {
+  const exportedAt = new Date().toISOString();
+  return {
+    backupType: 'team-outing-event-export',
+    backupVersion: 1,
+    app: 'Team Outing Expense Tracker',
+    exportedAt,
+    exportedBy: backupSafeUser(currentUser),
+    eventId: eventRecord.id,
+    eventName: eventRecord.event?.name || 'Unknown event',
+    summary: {
+      participants: (eventRecord.participants || []).length,
+      categories: (eventRecord.categories || []).length,
+      expenses: (eventRecord.expenses || []).length,
+      settlements: (eventRecord.settlements || []).length,
+      auditEntries: (eventRecord.auditLog || []).length
+    },
+    event: eventRecord
+  };
+}
+
+function validateRestoreBackupPayload(backup) {
+  if (!backup || typeof backup !== 'object') {
+    const error = new Error('Upload a valid JSON backup file. The app cannot restore vibes.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (backup.backupType !== 'team-outing-full-app-state') {
+    const error = new Error('Only full app backups can be restored. Event exports are archive files, not restore files. Bureaucratic, yes, but safer.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (Number(backup.backupVersion || 0) !== 1) {
+    const error = new Error('This backup version is not supported by the current app.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const restoredData = backup.data;
+  if (!restoredData || typeof restoredData !== 'object') {
+    const error = new Error('Backup file is missing the app data section.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  normalizeMultiEventStore(restoredData);
+  if (!Array.isArray(restoredData.events) || restoredData.events.length === 0) {
+    const error = new Error('Backup must contain at least one event.');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Array.isArray(restoredData.users)) restoredData.users = [];
+  if (!Array.isArray(restoredData.invitations)) restoredData.invitations = [];
+
+  for (const eventRecord of restoredData.events) {
+    if (!eventRecord.id || !eventRecord.event?.name) {
+      const error = new Error('Backup contains an invalid event record.');
+      error.statusCode = 400;
+      throw error;
+    }
+    eventRecord.participants = Array.isArray(eventRecord.participants) ? eventRecord.participants : [];
+    eventRecord.categories = Array.isArray(eventRecord.categories) ? eventRecord.categories : [];
+    eventRecord.expenses = Array.isArray(eventRecord.expenses) ? eventRecord.expenses : [];
+    eventRecord.settlements = Array.isArray(eventRecord.settlements) ? eventRecord.settlements : [];
+    eventRecord.notifications = Array.isArray(eventRecord.notifications) ? eventRecord.notifications : [];
+    eventRecord.auditLog = Array.isArray(eventRecord.auditLog) ? eventRecord.auditLog : [];
+  }
+
+  return restoredData;
+}
+
+function ensureCurrentAdminAfterRestore(restoredData, currentUser) {
+  const users = ensureUsers(restoredData);
+  let restoredUser = users.find((user) => user.authUserId && user.authUserId === currentUser.authUserId)
+    || users.find((user) => normalizeIdentity(user.email) === normalizeIdentity(currentUser.email));
+
+  if (!restoredUser) {
+    restoredUser = {
+      id: currentUser.id || `u-${nanoid(8)}`,
+      authUserId: currentUser.authUserId || '',
+      name: currentUser.name || currentUser.email || 'Restoring admin',
+      email: currentUser.email || '',
+      role: 'admin',
+      accessStatus: 'active',
+      createdAt: new Date().toISOString()
+    };
+    users.push(restoredUser);
+  }
+
+  restoredUser.authUserId = restoredUser.authUserId || currentUser.authUserId || '';
+  restoredUser.email = restoredUser.email || currentUser.email || '';
+  restoredUser.name = restoredUser.name || currentUser.name || restoredUser.email || 'Restoring admin';
+  restoredUser.role = 'admin';
+  restoredUser.accessStatus = 'active';
+  restoredUser.lastLoginAt = new Date().toISOString();
+  return restoredUser;
+}
+
+function sendJsonAttachment(res, fileName, payload) {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.send(JSON.stringify(payload, null, 2));
+}
+
+function reportFileSafeName(value = 'team-outing') {
+  return String(value || 'team-outing')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'team-outing';
+}
+
 function currentEventForAudit(data, user) {
   try {
     return getEventRecordForUser(data, user);
@@ -868,11 +1020,77 @@ app.get('/api/health', (req, res) => {
     inviteLinks: 'manual-copy',
     inviteAutoParticipantTagging: 'enabled',
     sessionTimeout: 'client-enforced',
-    emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured'
+    emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured',
+    adminBackupRestore: 'enabled'
   });
 });
 
 app.use('/api', authMiddleware);
+
+
+app.get('/api/admin/backup', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+
+  const eventRecord = currentEventForAudit(data, currentUser);
+  addAuditLog(eventRecord, currentUser, 'backup.downloaded', 'backup', 'Downloaded full app backup.', {
+    summary: appStateSummary(data)
+  });
+  const backup = buildFullBackup(data, currentUser);
+  await writeStore(data);
+  sendJsonAttachment(res, `team-outing-full-backup-${backupFileStamp()}.json`, backup);
+}));
+
+app.get('/api/admin/events/:eventId/export', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+
+  const eventRecord = requireExistingItem(data.events.find((record) => record.id === req.params.eventId), 'Event');
+  addAuditLog(eventRecord, currentUser, 'backup.event_exported', 'backup', `Exported event backup for ${eventRecord.event?.name || eventRecord.id}.`, {
+    eventId: eventRecord.id,
+    eventName: eventRecord.event?.name || ''
+  });
+  const backup = buildEventBackup(eventRecord, currentUser);
+  await writeStore(data);
+  sendJsonAttachment(res, `${reportFileSafeName(eventRecord.event?.name || 'team-outing')}-event-export-${backupFileStamp()}.json`, backup);
+}));
+
+app.post('/api/admin/restore', asyncHandler(async (req, res) => {
+  const currentData = await readStore();
+  normalizeMultiEventStore(currentData);
+  const currentUser = resolveAppUser(currentData, req.authUser);
+  requireRole(currentUser, ['admin']);
+
+  if (String(req.body.confirmation || '').trim() !== 'RESTORE') {
+    const error = new Error('Type RESTORE to confirm the restore operation. Destructive buttons need adult supervision.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const backup = req.body.backup;
+  const backupSize = Buffer.byteLength(JSON.stringify(backup || {}), 'utf8');
+  if (backupSize > 10 * 1024 * 1024) {
+    const error = new Error('Backup file is too large for restore. Keep it under 10 MB.');
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const restoredData = validateRestoreBackupPayload(structuredClone(backup));
+  const restoredAdmin = ensureCurrentAdminAfterRestore(restoredData, currentUser);
+  const eventRecord = currentEventForAudit(restoredData, restoredAdmin);
+  addAuditLog(eventRecord, restoredAdmin, 'backup.restore_completed', 'backup', 'Restored full app data from uploaded backup.', {
+    backupExportedAt: backup.exportedAt || '',
+    backupExportedBy: backup.exportedBy || {},
+    restoredSummary: appStateSummary(restoredData)
+  });
+
+  await writeStore(restoredData);
+  res.json({ ok: true, restoredAt: new Date().toISOString(), summary: appStateSummary(restoredData) });
+}));
 
 app.get('/api/me', asyncHandler(async (req, res) => {
   const data = await readStore();

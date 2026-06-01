@@ -2869,6 +2869,203 @@ function AuditTrail({ data, setToast }) {
 }
 
 
+
+function DataManagement({ data, reload, setToast }) {
+  const [busy, setBusy] = useState('');
+  const [restoreFileName, setRestoreFileName] = useState('');
+  const [restoreBackup, setRestoreBackup] = useState(null);
+  const [restoreSummary, setRestoreSummary] = useState(null);
+  const [restoreConfirmation, setRestoreConfirmation] = useState('');
+  const activeEventName = data.event?.name || 'current outing';
+  const activeEventId = data.activeEventId;
+
+  function backupSummaryFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.summary) return payload.summary;
+    const appData = payload.data || {};
+    const events = Array.isArray(appData.events) ? appData.events : [];
+    return {
+      events: events.length,
+      users: Array.isArray(appData.users) ? appData.users.length : 0,
+      invitations: Array.isArray(appData.invitations) ? appData.invitations.length : 0,
+      totalExpenses: events.reduce((sum, eventRecord) => sum + (eventRecord.expenses || []).length, 0),
+      totalParticipants: events.reduce((sum, eventRecord) => sum + (eventRecord.participants || []).length, 0),
+      totalAuditEntries: events.reduce((sum, eventRecord) => sum + (eventRecord.auditLog || []).length, 0)
+    };
+  }
+
+  async function downloadFullBackup() {
+    try {
+      setBusy('full-backup');
+      await downloadApiFile('/admin/backup', `team-outing-full-backup-${new Date().toISOString().slice(0, 10)}.json`);
+      setToast('Full app backup downloaded. Future-you gets a parachute.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function exportCurrentEvent() {
+    try {
+      setBusy('event-export');
+      await downloadApiFile(`/admin/events/${activeEventId}/export`, `${reportFileBaseName(activeEventName)}-event-export.json`);
+      setToast('Current event export downloaded. One outing, bottled neatly as JSON.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function clearRestoreSelection() {
+    setRestoreFileName('');
+    setRestoreBackup(null);
+    setRestoreSummary(null);
+    setRestoreConfirmation('');
+  }
+
+  async function handleRestoreFile(event) {
+    const file = event.target.files?.[0];
+    clearRestoreSelection();
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.json')) {
+      setToast('Upload a JSON backup file. The restore screen is picky because data loss is rude.');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setToast('Backup file is too large. Keep restore files under 10 MB.');
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (parsed.backupType !== 'team-outing-full-app-state') {
+        throw new Error('Only full app backups can be restored. Event exports are archive files, not restore files.');
+      }
+      setRestoreFileName(file.name);
+      setRestoreBackup(parsed);
+      setRestoreSummary(backupSummaryFromPayload(parsed));
+      setToast('Backup file loaded. Type RESTORE only when you actually mean it.');
+    } catch (err) {
+      setToast(err.message || 'Could not read that backup file. JSON, somehow still dramatic.');
+      event.target.value = '';
+    }
+  }
+
+  async function restoreBackupNow() {
+    if (!restoreBackup) {
+      setToast('Select a full backup JSON file first. Restoring imaginary files remains unsupported.');
+      return;
+    }
+    if (restoreConfirmation !== 'RESTORE') {
+      setToast('Type RESTORE exactly to confirm. Destructive buttons need paperwork.');
+      return;
+    }
+
+    try {
+      setBusy('restore');
+      const result = await api('/admin/restore', {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: restoreConfirmation, backup: restoreBackup })
+      });
+      clearRestoreSelection();
+      setToast(`Backup restored. Events: ${result.summary?.events ?? 'unknown'}, expenses: ${result.summary?.totalExpenses ?? 'unknown'}.`);
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title="Data management" icon={ShieldCheck}>
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard label="Events in current view" value={String(data.eventList?.length || 0)} helper="Full backup includes every event stored in the app" />
+          <StatCard label="Current event expenses" value={String(data.expenses?.length || 0)} helper={activeEventName} />
+          <StatCard label="Current user" value={data.currentUser?.role || 'unknown'} helper="Only admins can open this tab" />
+        </div>
+
+        <div className="mt-6 grid gap-5 xl:grid-cols-2">
+          <div className="rounded-3xl border border-slate-100 bg-slate-50 p-5">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-slate-900 p-2 text-white"><Download size={18} /></div>
+              <div>
+                <h3 className="text-lg font-black text-slate-950">Backup and export</h3>
+                <p className="mt-1 text-sm text-slate-600">Download a complete app backup before large changes, demos, imports, or the classic human ritual of clicking things confidently.</p>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button className="btn-primary" type="button" onClick={downloadFullBackup} disabled={Boolean(busy)}>
+                <Download size={16} /> {busy === 'full-backup' ? 'Preparing backup...' : 'Download full backup'}
+              </button>
+              <button className="btn-ghost" type="button" onClick={exportCurrentEvent} disabled={Boolean(busy) || !activeEventId}>
+                <Download size={16} /> {busy === 'event-export' ? 'Exporting event...' : 'Export current event'}
+              </button>
+            </div>
+            <div className="mt-5 rounded-2xl bg-white p-4 text-sm text-slate-600 ring-1 ring-slate-200">
+              <p className="font-bold text-slate-900">Full backup includes</p>
+              <p className="mt-2">Events, participants, categories, expenses, settlements, notifications, audit logs, users, roles, invitations, and app metadata. It does not include Render, Vercel, Gmail, or Supabase secret values.</p>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-rose-100 bg-rose-50 p-5">
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-rose-700 p-2 text-white"><UploadCloud size={18} /></div>
+              <div>
+                <h3 className="text-lg font-black text-rose-950">Restore full backup</h3>
+                <p className="mt-1 text-sm text-rose-800">Restore replaces the current app state. Download a fresh backup first unless you enjoy living like a spreadsheet stunt driver.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="field-label">
+                Full backup JSON file
+                <input className="input" type="file" accept="application/json,.json" onChange={handleRestoreFile} />
+              </label>
+
+              {restoreFileName && (
+                <div className="rounded-2xl bg-white p-4 text-sm text-slate-700 ring-1 ring-rose-100">
+                  <p className="font-black text-slate-950">Loaded: {restoreFileName}</p>
+                  {restoreSummary && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <p>Events: <span className="font-bold">{restoreSummary.events ?? 0}</span></p>
+                      <p>Users: <span className="font-bold">{restoreSummary.users ?? 0}</span></p>
+                      <p>Expenses: <span className="font-bold">{restoreSummary.totalExpenses ?? 0}</span></p>
+                      <p>Audit entries: <span className="font-bold">{restoreSummary.totalAuditEntries ?? 0}</span></p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <label className="field-label">
+                Type RESTORE to confirm
+                <input className="input" value={restoreConfirmation} onChange={(e) => setRestoreConfirmation(e.target.value)} placeholder="RESTORE" />
+              </label>
+
+              <div className="flex flex-wrap gap-3">
+                <button className="rounded-2xl bg-rose-700 px-4 py-2 font-bold text-white hover:bg-rose-800 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={restoreBackupNow} disabled={busy === 'restore' || !restoreBackup || restoreConfirmation !== 'RESTORE'}>
+                  <AlertTriangle size={16} className="inline" /> {busy === 'restore' ? 'Restoring...' : 'Restore backup'}
+                </button>
+                <button className="btn-ghost" type="button" onClick={clearRestoreSelection} disabled={busy === 'restore'}>Clear selection</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
 function OfflineStatusBanner({ isOnline, lastSyncedAt, offlineNotice }) {
   const [visible, setVisible] = useState(false);
   const icon = isOnline ? <Wifi size={18} /> : <WifiOff size={18} />;
@@ -3132,6 +3329,7 @@ function AppShell() {
   const canViewNotifications = currentRole === 'admin' || currentRole === 'finance';
   const canViewAnalytics = currentRole === 'admin' || currentRole === 'finance';
   const canViewRoles = currentRole === 'admin';
+  const canViewDataManagement = currentRole === 'admin';
   const canViewAudit = currentRole === 'admin' || currentRole === 'finance';
   const canManageEventSetup = currentRole === 'admin' || currentRole === 'finance';
   const canManageParticipants = currentRole === 'admin' || currentRole === 'finance';
@@ -3174,8 +3372,12 @@ function AppShell() {
       visibleTabs.push(['roles', 'Roles']);
     }
 
+    if (canViewDataManagement) {
+      visibleTabs.push(['data', 'Data']);
+    }
+
     return visibleTabs;
-  }, [canViewEvents, canViewAnalytics, canViewNotifications, canViewAudit, canViewRoles, hasAssignedEvent]);
+  }, [canViewEvents, canViewAnalytics, canViewNotifications, canViewAudit, canViewRoles, canViewDataManagement, hasAssignedEvent]);
 
   useEffect(() => {
     const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
@@ -3308,6 +3510,7 @@ function AppShell() {
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
         {activeTab === 'audit' && canViewAudit && <AuditTrail data={data} setToast={setToast} />}
         {activeTab === 'roles' && canViewRoles && <Roles data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'data' && canViewDataManagement && <DataManagement data={data} reload={reload} setToast={setToast} />}
       </div>
 
       <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">

@@ -117,3 +117,58 @@ git commit -m "Auto-hide online offline status banner"
 git push origin main
 ```
 
+
+---
+
+# Phase 15 - Admin Backup, Restore, and Data Export Pack
+
+Phase 15 adds an Admin-only **Data** tab for backup, event export, and full app restore.
+
+## New Admin-only features
+
+- Download full app backup as JSON
+- Export current event as JSON
+- Restore full app backup from JSON
+- Preview backup summary before restore
+- Require typing `RESTORE` before replacing current app data
+- Preserve the currently signed-in Admin as active Admin after restore
+- Record backup and restore actions in Audit
+
+## Backend endpoints
+
+```text
+GET /api/admin/backup
+GET /api/admin/events/:eventId/export
+POST /api/admin/restore
+```
+
+## Audit actions
+
+```text
+backup.downloaded
+backup.event_exported
+backup.restore_completed
+```
+
+## Notes
+
+- Only full backups can be restored.
+- Event exports are archive/reference files and cannot be restored as the whole app state.
+- Backup files do not include Render, Vercel, Gmail, or Supabase environment secrets.
+- No new Render or Vercel environment variables are required.
+
+## Deploy steps
+
+```powershell
+cd C:\Users\ksath\Downloads\team-outing-expense-tracker-mobile-pwa\team-outing-expense-tracker
+
+git status
+
+git add -A
+
+git commit -m "Add admin backup and restore workflow"
+
+git push origin main
+```
+
+Both Vercel and Render may redeploy because Phase 15 changes frontend and backend files.
