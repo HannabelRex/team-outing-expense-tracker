@@ -5819,14 +5819,14 @@ function AppShell() {
   const currency = data.event.currency;
 
   return (
-    <main className="theme-shell min-h-screen text-slate-900" style={themeVars}>
-      <header className="app-header text-white">
-        <div className="mx-auto max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8 2xl:px-10">
-          <div className="flex flex-wrap items-start justify-between gap-5">
+    <main className="theme-shell app-shell min-h-screen text-slate-900" style={themeVars}>
+      <header className="app-header app-mobile-header text-white">
+        <div className="app-header-inner mx-auto max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8 2xl:px-10">
+          <div className="app-header-layout flex flex-wrap items-start justify-between gap-5">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Team Outing Expense Tracker</p>
-              <h1 className="mt-2 text-3xl font-black md:text-5xl">{data.event.name}</h1>
-              <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-300">
+              <p className="app-kicker text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Team Outing Expense Tracker</p>
+              <h1 className="app-event-title mt-2 text-3xl font-black md:text-5xl">{data.event.name}</h1>
+              <div className="app-event-meta mt-4 flex flex-wrap gap-3 text-sm text-slate-300">
                 {data.noAssignedEvent ? (
                   <span className="inline-flex items-center gap-2"><AlertTriangle size={16} /> Waiting for an admin to tag your login email to an outing</span>
                 ) : (
@@ -5838,7 +5838,7 @@ function AppShell() {
                 )}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="app-header-actions flex flex-wrap items-center gap-3">
               {canSwitchEvents && data.eventList?.length > 0 && (
                 <select
                   className="app-header-action rounded-2xl px-4 py-2 text-sm font-bold"
@@ -5892,7 +5892,7 @@ function AppShell() {
       </nav>
 
       <nav className="mobile-bottom-nav md:hidden" aria-label="Mobile navigation">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="mobile-bottom-nav-grid grid grid-cols-4 gap-2">
           {mobilePrimaryTabs.map(([key, label]) => {
             const Icon = key === 'dashboard' ? Home : key === 'expenses' ? Receipt : WalletCards;
             return (
@@ -5920,7 +5920,7 @@ function AppShell() {
               </div>
               <button className="btn-icon" type="button" onClick={() => setMobileMoreOpen(false)} aria-label="Close mobile menu"><X size={16} /></button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="mobile-more-options grid grid-cols-2 gap-2">
               {mobileMoreTabs.map(([key, label]) => (
                 <button key={key} className={`mobile-more-option ${activeTab === key ? 'mobile-more-option-active' : ''}`} type="button" onClick={() => setActiveTab(key)}>
                   {label}
@@ -5942,10 +5942,10 @@ function AppShell() {
         currentRole={currentRole}
       />
 
-      {toast && <div className="fixed right-4 top-4 z-20 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-soft">{toast}</div>}
+      {toast && <div className="app-toast fixed right-4 top-4 z-20 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-soft">{toast}</div>}
       {error && <div className="mx-auto mt-4 max-w-[1760px] px-4 sm:px-6 lg:px-8 2xl:px-10"><div className="rounded-2xl bg-rose-50 p-4 text-rose-800 ring-1 ring-rose-200">{error}</div></div>}
 
-      <div className="mx-auto max-w-[1760px] space-y-6 px-4 py-6 pb-28 sm:px-6 lg:px-8 md:pb-6 2xl:px-10">
+      <div className="app-content-scroll mx-auto max-w-[1760px] space-y-6 px-4 py-6 pb-28 sm:px-6 lg:px-8 md:pb-6 2xl:px-10">
         {activeTab === 'dashboard' && <Dashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'events' && canViewEvents && <EventsConsole data={data} reload={reload} setToast={setToast} onSwitchEvent={switchEvent} />}
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
@@ -5963,7 +5963,7 @@ function AppShell() {
         {activeTab === 'data' && canViewDataManagement && <DataManagement data={data} reload={reload} setToast={setToast} />}
       </div>
 
-      <footer className="mx-auto max-w-[1760px] px-4 pb-28 text-xs text-slate-500 sm:px-6 lg:px-8 md:pb-8 2xl:px-10">
+      <footer className="app-footer mx-auto max-w-[1760px] px-4 pb-28 text-xs text-slate-500 sm:px-6 lg:px-8 md:pb-8 2xl:px-10">
         Mobile PWA mode · {isOnline ? 'Online sync ready' : 'Offline cached view'} · Last synced: {formatSyncTime(lastSyncedAt)} · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>

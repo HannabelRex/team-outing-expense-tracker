@@ -616,3 +616,308 @@
     font-size: 0.75rem;
   }
 }
+
+/* Phase 24 mobile viewport optimization hotfix
+   Keep the logged-in app inside the device viewport. The outer page no longer scrolls on mobile;
+   only the active module content scrolls when the data genuinely needs more space. */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+@supports (height: 100dvh) {
+  .app-shell {
+    min-height: 100dvh;
+  }
+}
+
+@media (max-width: 767px) {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+  }
+
+  .theme-shell.app-shell {
+    display: flex;
+    height: 100vh;
+    min-height: 100vh;
+    max-height: 100vh;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  @supports (height: 100dvh) {
+    .theme-shell.app-shell {
+      height: 100dvh;
+      min-height: 100dvh;
+      max-height: 100dvh;
+    }
+  }
+
+  .theme-shell.app-shell,
+  .theme-shell.app-shell * {
+    min-width: 0;
+  }
+
+  .theme-shell.app-shell {
+    overflow-wrap: anywhere;
+  }
+
+  .theme-shell .app-mobile-header {
+    flex: 0 0 auto;
+  }
+
+  .theme-shell .app-header-inner {
+    padding: 0.7rem 0.75rem 0.65rem;
+  }
+
+  .theme-shell .app-header-layout {
+    gap: 0.65rem;
+  }
+
+  .theme-shell .app-kicker {
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+  }
+
+  .theme-shell .app-event-title {
+    display: -webkit-box;
+    max-height: 3.25rem;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 1.35rem !important;
+    line-height: 1.55rem !important;
+  }
+
+  .theme-shell .app-event-meta {
+    margin-top: 0.55rem;
+    max-height: 2.45rem;
+    gap: 0.4rem;
+    overflow: hidden;
+    font-size: 0.72rem;
+    line-height: 1.15rem;
+  }
+
+  .theme-shell .app-event-meta span {
+    max-width: 100%;
+  }
+
+  .theme-shell .app-header-actions {
+    width: 100%;
+    flex-wrap: nowrap !important;
+    gap: 0.4rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 0.1rem;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .theme-shell .app-header-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .theme-shell .app-header-actions > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .theme-shell .app-header-actions > .rounded-2xl,
+  .theme-shell .app-header-action {
+    min-height: 2.25rem;
+    border-radius: 0.9rem;
+    padding: 0.42rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    line-height: 1rem;
+  }
+
+  .theme-shell .app-header-actions select {
+    max-width: 58vw;
+  }
+
+  .theme-shell .app-header-actions svg {
+    width: 0.92rem;
+    height: 0.92rem;
+  }
+
+  .theme-shell .app-content-scroll {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    max-width: 100vw;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 0.75rem 0.75rem calc(4.9rem + env(safe-area-inset-bottom)) !important;
+    scroll-padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  }
+
+  .theme-shell .app-content-scroll > * {
+    scroll-margin-bottom: calc(5.25rem + env(safe-area-inset-bottom));
+  }
+
+  .theme-shell .app-footer {
+    display: none;
+  }
+
+  .theme-shell .app-toast {
+    top: 0.75rem;
+    right: 0.75rem;
+    left: 0.75rem;
+    z-index: 60;
+    text-align: center;
+  }
+
+  .mobile-bottom-nav {
+    left: max(0.45rem, env(safe-area-inset-left));
+    right: max(0.45rem, env(safe-area-inset-right));
+    bottom: max(0.45rem, env(safe-area-inset-bottom));
+    border-radius: 1.25rem;
+    padding: 0.35rem;
+  }
+
+  .mobile-bottom-nav-grid {
+    gap: 0.35rem;
+  }
+
+  .mobile-bottom-nav-item {
+    min-height: 2.75rem;
+    gap: 0.16rem;
+    border-radius: 0.9rem;
+    font-size: 0.62rem;
+  }
+
+  .mobile-bottom-nav-item svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mobile-more-panel {
+    left: 0.5rem;
+    right: 0.5rem;
+    bottom: calc(4.45rem + env(safe-area-inset-bottom));
+    max-height: min(56dvh, 24rem);
+    border-radius: 1.35rem;
+    padding: 0.85rem;
+  }
+
+  .mobile-more-panel h3 {
+    font-size: 1rem;
+    line-height: 1.25rem;
+  }
+
+  .mobile-more-options {
+    gap: 0.45rem;
+  }
+
+  .mobile-more-option {
+    min-height: 2.35rem;
+    border-radius: 0.85rem;
+    padding: 0.55rem 0.5rem;
+    font-size: 0.7rem;
+    line-height: 0.95rem;
+  }
+
+  .app-theme-menu {
+    position: fixed !important;
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    top: auto !important;
+    bottom: calc(4.8rem + env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    max-height: min(60dvh, 26rem);
+    overflow-y: auto;
+  }
+
+  .theme-shell section.rounded-3xl {
+    border-radius: 1.15rem;
+    padding: 0.85rem;
+  }
+
+  .theme-shell .rounded-3xl {
+    border-radius: 1.25rem;
+  }
+
+  .theme-shell .grid,
+  .theme-shell .flex {
+    min-width: 0;
+  }
+
+  .theme-shell .overflow-x-auto {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .theme-shell .recharts-wrapper,
+  .theme-shell .recharts-surface {
+    max-width: 100% !important;
+  }
+
+  .theme-shell img,
+  .theme-shell canvas,
+  .theme-shell svg {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 390px) {
+  .theme-shell .app-header-inner {
+    padding: 0.55rem 0.6rem 0.5rem;
+  }
+
+  .theme-shell .app-event-title {
+    font-size: 1.2rem !important;
+    line-height: 1.4rem !important;
+  }
+
+  .theme-shell .app-event-meta {
+    font-size: 0.66rem;
+  }
+
+  .theme-shell .app-content-scroll {
+    padding-right: 0.55rem !important;
+    padding-left: 0.55rem !important;
+  }
+
+  .mobile-bottom-nav-item {
+    min-height: 2.55rem;
+    font-size: 0.58rem;
+  }
+}
+
+@media (max-width: 767px) and (max-height: 700px) {
+  .theme-shell .app-header-inner {
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
+  }
+
+  .theme-shell .app-event-meta {
+    display: none;
+  }
+
+  .theme-shell .app-content-scroll {
+    padding-top: 0.5rem !important;
+  }
+
+  .mobile-bottom-nav-item {
+    min-height: 2.45rem;
+  }
+
+  .mobile-more-panel {
+    max-height: min(52dvh, 20rem);
+  }
+}
