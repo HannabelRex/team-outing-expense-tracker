@@ -3,6 +3,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { nanoid } from 'nanoid';
 import PDFDocument from 'pdfkit';
+import archiver from 'archiver';
 import nodemailer from 'nodemailer';
 import { readStore, writeStore, sanitizeObject } from './storage.js';
 import {
@@ -553,6 +554,170 @@ function receiptFileName(receipt = null) {
   if (!receipt) return '';
   if (typeof receipt === 'string') return receipt.split('/').pop() || 'receipt';
   return receipt.fileName || receipt.name || receiptStoragePath(receipt).split('/').pop() || 'receipt';
+}
+
+
+function boolQuery(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+function zipSafeSegment(value = 'item', fallback = 'item') {
+  const cleaned = String(value || fallback)
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/[^a-zA-Z0-9._ -]+/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return cleaned || fallback;
+}
+
+function receiptExtension(receipt = null) {
+  const fileName = receiptFileName(receipt);
+  const fromName = fileName.match(/\.[a-zA-Z0-9]{2,6}$/)?.[0]?.toLowerCase();
+  if (fromName) return fromName;
+  if (receipt && typeof receipt === 'object') {
+    const fromType = extensionFromContentType(receipt.contentType || receipt.mimeType || '');
+    if (fromType) return fromType;
+  }
+  return '.bin';
+}
+
+function receiptZipFileName(eventRecord, expense, folder = 'approved-receipts') {
+  const participantMap = new Map((eventRecord.participants || []).map((participant) => [participant.id, participant.name]));
+  const categoryMap = new Map((eventRecord.categories || []).map((category) => [category.id, category.name]));
+  categoryMap.set(PERSONAL_CATEGORY_ID, PERSONAL_CATEGORY_NAME);
+  const date = zipSafeSegment(expense.date || expense.createdAt?.slice?.(0, 10) || 'no-date', 'no-date');
+  const category = zipSafeSegment(categoryMap.get(expense.categoryId) || 'uncategorized', 'uncategorized');
+  const title = zipSafeSegment(expense.title || expense.description || 'expense', 'expense');
+  const paidBy = zipSafeSegment(
+    expense.paymentSource === 'pool'
+      ? (participantMap.get(eventRecord.event?.financierParticipantId) || 'team-fund-pool')
+      : (participantMap.get(expense.paidByParticipantId) || 'unknown'),
+    'unknown'
+  );
+  const amount = zipSafeSegment(String(roundMoney(Number(expense.amount || 0))).replace(/\./g, '-'), '0');
+  const id = zipSafeSegment(expense.id || `exp-${nanoid(6)}`, 'expense');
+  return `${folder}/${date}_${category}_${title}_${paidBy}_${amount}_${id}${receiptExtension(expense.receipt)}`.toLowerCase();
+}
+
+function expenseStatusFolder(expense) {
+  const status = expense.approvalStatus || 'pending';
+  if (status === 'approved') return 'approved-receipts';
+  if (status === 'rejected') return 'rejected-expenses';
+  return 'pending-receipts';
+}
+
+function receiptZipContentType(receipt = null) {
+  if (receipt && typeof receipt === 'object' && receipt.contentType) return receipt.contentType;
+  const ext = receiptExtension(receipt);
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.pdf') return 'application/pdf';
+  return 'application/octet-stream';
+}
+
+function claimTitlesForExpense(eventRecord, expense) {
+  const activeClaimStatuses = ['submitted', 'approved', 'partially-received', 'received'];
+  const claims = (eventRecord.companyClaims || []).filter((claim) => activeClaimStatuses.includes(claim.status || 'draft'));
+  const officialExpense = !isPersonalExpense(expense);
+  if (!officialExpense) return [];
+
+  return claims
+    .filter((claim) => {
+      const type = claim.type || 'fixed-pool';
+      if (type === 'category-based') {
+        return Array.isArray(claim.categoryIds) && claim.categoryIds.includes(expense.categoryId);
+      }
+      if (type === 'percentage' || type === 'fixed-pool' || type === 'financier') {
+        return expense.approvalStatus === 'approved';
+      }
+      return false;
+    })
+    .map((claim) => claim.title || claim.name || claim.id || 'Company claim');
+}
+
+function receiptExportRows(eventRecord, expenses, fileNameByExpenseId) {
+  const participantMap = new Map((eventRecord.participants || []).map((participant) => [participant.id, participant.name]));
+  const categoryMap = new Map((eventRecord.categories || []).map((category) => [category.id, category.name]));
+  categoryMap.set(PERSONAL_CATEGORY_ID, PERSONAL_CATEGORY_NAME);
+  return expenses.map((expense) => ({
+    expenseId: expense.id || '',
+    date: expense.date || expense.createdAt?.slice?.(0, 10) || '',
+    category: categoryMap.get(expense.categoryId) || 'Uncategorized',
+    description: expense.title || expense.description || '',
+    paidBy: expense.paymentSource === 'pool' ? 'Team fund pool' : (participantMap.get(expense.paidByParticipantId) || 'Unknown'),
+    paymentSource: expense.paymentSource === 'pool' ? 'Team Fund Pool' : 'Participant',
+    amount: roundMoney(Number(expense.amount || 0)),
+    status: expense.approvalStatus || 'pending',
+    personalOffBudget: isPersonalExpense(expense) ? 'Yes' : 'No',
+    receiptFile: fileNameByExpenseId.get(expense.id) || '',
+    originalReceiptFile: receiptFileName(expense.receipt),
+    receiptStoragePath: receiptStoragePath(expense.receipt),
+    claimLinked: claimTitlesForExpense(eventRecord, expense).length ? 'Yes' : 'No',
+    claimTitles: claimTitlesForExpense(eventRecord, expense).join('; '),
+    notes: expense.notes || ''
+  }));
+}
+
+async function fetchReceiptBuffer(receipt = null) {
+  const storagePath = receiptStoragePath(receipt);
+  let downloadUrl = '';
+  const headers = {};
+
+  if (storagePath && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    downloadUrl = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${encodedStoragePath(storagePath)}`;
+    headers.Authorization = `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`;
+    headers.apikey = SUPABASE_SERVICE_ROLE_KEY;
+  } else if (receipt && typeof receipt === 'object' && receipt.url) {
+    downloadUrl = receipt.url;
+  } else if (typeof receipt === 'string' && receipt.startsWith('http')) {
+    downloadUrl = receipt;
+  }
+
+  if (!downloadUrl) {
+    const error = new Error('Receipt file has no downloadable storage path or URL.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const response = await fetch(downloadUrl, { headers });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    const error = new Error(`Receipt download failed: ${body || response.statusText}`);
+    error.statusCode = response.status || 502;
+    throw error;
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function buildReceiptZipSelection(eventRecord, query = {}) {
+  const includePending = boolQuery(query.includePending, false);
+  const includeRejected = boolQuery(query.includeRejected, false);
+  const includePersonal = boolQuery(query.includePersonal, false);
+  const expenses = (eventRecord.expenses || []).filter((expense) => {
+    const status = expense.approvalStatus || 'pending';
+    if (isPersonalExpense(expense) && !includePersonal) return false;
+    if (status === 'approved') return true;
+    if (status === 'pending') return includePending;
+    if (status === 'rejected') return includeRejected;
+    return includePending;
+  });
+
+  return {
+    includePending,
+    includeRejected,
+    includePersonal,
+    includeMissing: boolQuery(query.includeMissing, true),
+    includeClaimMapping: boolQuery(query.includeClaimMapping, true),
+    expenses,
+    receiptExpenses: expenses.filter((expense) => expense.receipt),
+    missingReceiptExpenses: expenses.filter((expense) => !expense.receipt)
+  };
 }
 
 async function deleteReceiptFromSupabase(receipt = null) {
@@ -1638,6 +1803,7 @@ app.get('/api/health', (req, res) => {
     emailNotifications: EMAIL_NOTIFICATIONS_ENABLED ? 'configured' : 'not-configured',
     adminBackupRestore: 'enabled',
     dailyAutoBackup: AUTO_BACKUP_ENABLED ? 'enabled' : 'disabled',
+    receiptZipExport: 'enabled',
     dailyAutoBackupStorage: SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY ? `${AUTO_BACKUP_BUCKET}/${AUTO_BACKUP_PATH}` : 'not-configured',
     loginPerformanceOptimization: 'enabled',
     adminDangerZoneReset: 'enabled'
@@ -4110,6 +4276,132 @@ app.get('/api/reports', asyncHandler(async (req, res) => {
   const activeEvent = getEventRecordForUser(data, currentUser);
   await writeStore(data);
   res.json(buildExpenseReport(activeEvent));
+}));
+
+
+
+app.get('/api/reports/receipt-zip', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  const selection = buildReceiptZipSelection(activeEvent, req.query);
+  const currency = activeEvent.event?.currency || 'INR';
+  const fileBaseName = safeReportFileName(activeEvent.event?.name || 'team-outing');
+  const zipFileName = `${fileBaseName}-receipt-submission.zip`;
+  const fileNameByExpenseId = new Map();
+  const downloadErrors = [];
+
+  const archive = archiver('zip', { zlib: { level: 9 } });
+
+  archive.on('error', (error) => {
+    console.error('Receipt ZIP generation failed:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Receipt ZIP generation failed.' });
+    } else {
+      res.destroy(error);
+    }
+  });
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${zipFileName}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  archive.pipe(res);
+
+  const eventSummaryJson = {
+    generatedAt: new Date().toISOString(),
+    generatedBy: {
+      name: currentUser.name || '',
+      email: currentUser.email || '',
+      role: currentUser.role || ''
+    },
+    event: {
+      id: activeEvent.id,
+      name: activeEvent.event?.name || '',
+      date: activeEvent.event?.date || '',
+      location: activeEvent.event?.location || '',
+      currency
+    },
+    options: {
+      includePending: selection.includePending,
+      includeRejected: selection.includeRejected,
+      includePersonal: selection.includePersonal,
+      includeMissing: selection.includeMissing,
+      includeClaimMapping: selection.includeClaimMapping
+    },
+    counts: {
+      selectedExpenses: selection.expenses.length,
+      receiptFiles: selection.receiptExpenses.length,
+      missingReceipts: selection.missingReceiptExpenses.length
+    }
+  };
+
+  archive.append(JSON.stringify(eventSummaryJson, null, 2), { name: '00-event-summary.json' });
+
+  for (const expense of selection.receiptExpenses) {
+    const folder = isPersonalExpense(expense) ? 'personal-off-budget' : expenseStatusFolder(expense);
+    const zipPath = receiptZipFileName(activeEvent, expense, folder);
+    fileNameByExpenseId.set(expense.id, zipPath);
+    try {
+      const buffer = await fetchReceiptBuffer(expense.receipt);
+      archive.append(buffer, {
+        name: zipPath,
+        date: expense.receipt?.uploadedAt ? new Date(expense.receipt.uploadedAt) : new Date(),
+        mode: 0o644
+      });
+    } catch (error) {
+      downloadErrors.push({
+        expenseId: expense.id || '',
+        date: expense.date || '',
+        description: expense.title || expense.description || '',
+        receiptFile: receiptFileName(expense.receipt),
+        receiptStoragePath: receiptStoragePath(expense.receipt),
+        error: error.message || 'Receipt download failed.'
+      });
+      fileNameByExpenseId.set(expense.id, 'DOWNLOAD FAILED - see receipt-download-errors.csv');
+    }
+  }
+
+  const indexRows = receiptExportRows(activeEvent, selection.expenses, fileNameByExpenseId).map((row) => ({
+    ...row,
+    amount: `${currency} ${row.amount}`,
+    claimTitles: selection.includeClaimMapping ? row.claimTitles : '',
+    claimLinked: selection.includeClaimMapping ? row.claimLinked : 'No'
+  }));
+  archive.append(toCsv(indexRows), { name: '00-receipt-index.csv' });
+
+  if (selection.includeMissing && selection.missingReceiptExpenses.length > 0) {
+    const missingRows = receiptExportRows(activeEvent, selection.missingReceiptExpenses, new Map()).map((row) => ({
+      expenseId: row.expenseId,
+      date: row.date,
+      category: row.category,
+      description: row.description,
+      paidBy: row.paidBy,
+      amount: `${currency} ${row.amount}`,
+      status: row.status,
+      personalOffBudget: row.personalOffBudget,
+      notes: row.notes
+    }));
+    archive.append(toCsv(missingRows), { name: 'missing-receipts/missing-receipts.csv' });
+  }
+
+  if (downloadErrors.length > 0) {
+    archive.append(toCsv(downloadErrors), { name: 'receipt-download-errors.csv' });
+  }
+
+  addAuditLog(activeEvent, currentUser, 'report.receipt_zip_downloaded', 'report', `Downloaded receipt submission ZIP for ${activeEvent.event?.name || 'active event'}.`, {
+    receiptCount: selection.receiptExpenses.length - downloadErrors.length,
+    selectedExpenseCount: selection.expenses.length,
+    missingReceiptCount: selection.missingReceiptExpenses.length,
+    downloadErrorCount: downloadErrors.length,
+    includePending: selection.includePending,
+    includeRejected: selection.includeRejected,
+    includePersonal: selection.includePersonal,
+    includeClaimMapping: selection.includeClaimMapping
+  });
+  await writeStore(data);
+  await archive.finalize();
 }));
 
 

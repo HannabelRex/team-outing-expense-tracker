@@ -4528,10 +4528,32 @@ function ItineraryPlanner({ data, reload, setToast }) {
 function Reports({ data, setToast, activeTheme }) {
   const currency = data.event.currency;
   const [busy, setBusy] = useState('');
+  const [receiptZipOptions, setReceiptZipOptions] = useState({
+    includePending: false,
+    includeRejected: false,
+    includePersonal: false
+  });
   const chartTheme = useMemo(() => buildChartTheme(activeTheme), [activeTheme]);
   const tooltipProps = useMemo(() => themedTooltipProps(chartTheme), [chartTheme]);
   const pieData = data.dashboard.categorySpending.filter((category) => category.actualCost > 0).map((category) => ({ name: category.name, value: category.actualCost }));
   const baseName = reportFileBaseName(data.event.name);
+  const canDownloadReceiptZip = ['admin', 'finance'].includes(data.currentUser?.role);
+  const receiptSummary = useMemo(() => {
+    const selectedExpenses = data.expenses.filter((expense) => {
+      const status = expense.approvalStatus || 'pending';
+      const isPersonal = expense.categoryId === 'personal-off-budget' || expense.categoryName === 'Personal (off-budget split)' || expense.isPersonalExpense;
+      if (isPersonal && !receiptZipOptions.includePersonal) return false;
+      if (status === 'approved') return true;
+      if (status === 'pending') return receiptZipOptions.includePending;
+      if (status === 'rejected') return receiptZipOptions.includeRejected;
+      return receiptZipOptions.includePending;
+    });
+    return {
+      total: selectedExpenses.length,
+      attached: selectedExpenses.filter((expense) => expense.receipt).length,
+      missing: selectedExpenses.filter((expense) => !expense.receipt).length
+    };
+  }, [data.expenses, receiptZipOptions]);
 
   async function downloadReport(type) {
     setBusy(type);
@@ -4548,6 +4570,29 @@ function Reports({ data, setToast, activeTheme }) {
     } finally {
       setBusy('');
     }
+  }
+
+  async function downloadReceiptZip() {
+    setBusy('receiptZip');
+    try {
+      const params = new URLSearchParams({
+        includePending: String(receiptZipOptions.includePending),
+        includeRejected: String(receiptZipOptions.includeRejected),
+        includePersonal: String(receiptZipOptions.includePersonal),
+        includeMissing: 'true',
+        includeClaimMapping: 'true'
+      });
+      await downloadApiFile(`/reports/receipt-zip?${params.toString()}`, `${baseName}-receipt-submission.zip`);
+      setToast('Receipt ZIP downloaded with index and missing receipt list. Tiny paperwork dragon slain.');
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function updateReceiptZipOption(key, value) {
+    setReceiptZipOptions((current) => ({ ...current, [key]: value }));
   }
 
   const reportAction = (
@@ -4576,6 +4621,31 @@ function Reports({ data, setToast, activeTheme }) {
             <p className="font-bold text-slate-900">PDF export includes</p>
             <p className="mt-2">Event details, budget summary, category spending, participant contribution, settlement summary, expense list, receipt references.</p>
           </div>
+        </div>
+        <div className="rounded-2xl bg-slate-50 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="flex items-center gap-2 font-bold text-slate-900"><Receipt size={18} /> Receipt Submission ZIP</h3>
+              <p className="mt-2 text-sm text-slate-600">Download receipt files for this event in one ZIP with an index CSV, missing receipt list, and company-claim mapping.</p>
+            </div>
+            <button className="btn-primary shrink-0" type="button" onClick={downloadReceiptZip} disabled={!canDownloadReceiptZip || Boolean(busy)}>
+              <Download size={16} /> {busy === 'receiptZip' ? 'Preparing ZIP...' : 'Download receipt ZIP'}
+            </button>
+          </div>
+          {!canDownloadReceiptZip && (
+            <p className="mt-3 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-100">Only Admin and Finance users can download all receipts. Privacy: still annoying, still necessary.</p>
+          )}
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+            <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200"><p className="text-xs font-black uppercase text-slate-400">Selected expenses</p><p className="text-lg font-black text-slate-950">{receiptSummary.total}</p></div>
+            <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200"><p className="text-xs font-black uppercase text-slate-400">Receipts attached</p><p className="text-lg font-black text-slate-950">{receiptSummary.attached}</p></div>
+            <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200"><p className="text-xs font-black uppercase text-slate-400">Missing receipts</p><p className="text-lg font-black text-slate-950">{receiptSummary.missing}</p></div>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
+            <label className="receipt-zip-option"><input type="checkbox" checked={receiptZipOptions.includePending} onChange={(event) => updateReceiptZipOption('includePending', event.target.checked)} /> Include pending expenses</label>
+            <label className="receipt-zip-option"><input type="checkbox" checked={receiptZipOptions.includeRejected} onChange={(event) => updateReceiptZipOption('includeRejected', event.target.checked)} /> Include rejected expenses</label>
+            <label className="receipt-zip-option"><input type="checkbox" checked={receiptZipOptions.includePersonal} onChange={(event) => updateReceiptZipOption('includePersonal', event.target.checked)} /> Include personal/off-budget</label>
+          </div>
+          <p className="mt-3 text-xs font-semibold text-slate-500">Default export includes approved official expenses only. The ZIP always includes <span className="font-black text-slate-700">00-receipt-index.csv</span> and a missing receipt CSV when needed.</p>
         </div>
         <div className="h-80 rounded-2xl bg-slate-50 p-4">
           {pieData.length === 0 ? <EmptyState title="No chart data" body="Add expenses to visualize spending." /> : (
