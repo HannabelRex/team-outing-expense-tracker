@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, calculateFinalClosure, calculateFundPool, generateSettlementPlan } from './calculations.js';
+import { calculateBudgetCollections, calculateCompanyClaims, calculateDashboard, calculateExpenseShares, calculateFinalClosure, calculateFundPool, generateSettlementPlan, isExpenseLockedByClaim } from './calculations.js';
 
 const equalExpense = {
   title: 'Snacks',
@@ -306,5 +306,75 @@ assert.equal(finalClosureRounding.roundOffBalancerAction, 'collect-roundoff');
 assert.equal(finalClosureRounding.roundOffBalancerAmountRounded, 1);
 assert.equal(finalClosureRounding.postBalancerCashNetOutflow, 223);
 assert.equal(finalClosureRounding.postBalancerDifference, -0.08);
+
+
+const companyClaimData = {
+  event: { estimatedBudget: 1000 },
+  participants: [
+    { id: 'cc1', name: 'Claim A', emailOrPhone: 'a@test.com' },
+    { id: 'cc2', name: 'Claim B', emailOrPhone: 'b@test.com' }
+  ],
+  categories: [{ id: 'c-claim', name: 'Claimable', estimatedCost: 1000 }],
+  budgetCollections: [
+    { participantId: 'cc1', expectedAmount: 500, payments: [{ id: 'ccp1', amount: 500, paidAt: '2026-07-28', mode: 'UPI' }] },
+    { participantId: 'cc2', expectedAmount: 500, payments: [{ id: 'ccp2', amount: 500, paidAt: '2026-07-28', mode: 'UPI' }] }
+  ],
+  expenses: [
+    {
+      title: 'Pool bill',
+      amount: 300,
+      categoryId: 'c-claim',
+      date: '2026-07-28',
+      paidByParticipantId: 'cc1',
+      handledByParticipantId: 'cc1',
+      paymentSource: 'pool',
+      participantIds: [],
+      splitMethod: 'pool',
+      customSplits: [],
+      percentageSplits: [],
+      paymentMethod: 'UPI',
+      approvalStatus: 'approved'
+    }
+  ],
+  settlements: [],
+  companyClaims: [
+    {
+      id: 'claim1',
+      type: 'fixed-pool',
+      status: 'received',
+      expectedAmount: 200,
+      approvedAmount: 200,
+      receivedAmount: 200,
+      receivedByParticipantId: 'cc1',
+      receivedAt: '2026-07-30'
+    }
+  ]
+};
+
+const companyClaims = calculateCompanyClaims(companyClaimData);
+assert.equal(companyClaims.poolReceivedTotal, 200);
+assert.equal(companyClaims.expenseLockActive, true);
+assert.equal(isExpenseLockedByClaim(companyClaimData), true);
+const companyFundPool = calculateFundPool(companyClaimData);
+assert.equal(companyFundPool.currentBalance, 900, 'Received pool company claim should increase team fund pool balance');
+const companyFinalClosure = calculateFinalClosure(companyClaimData);
+assert.equal(companyFinalClosure.currentPoolBalance, 900);
+
+const directCompanyClaimData = {
+  ...companyClaimData,
+  companyClaims: [
+    {
+      id: 'claim-direct',
+      type: 'direct-participant',
+      status: 'received',
+      participantPayments: [{ participantId: 'cc1', amount: 100, receivedAt: '2026-07-30' }]
+    }
+  ]
+};
+const directCompanyClaims = calculateCompanyClaims(directCompanyClaimData);
+assert.equal(directCompanyClaims.poolReceivedTotal, 0);
+assert.equal(directCompanyClaims.directParticipantTotal, 100);
+assert.equal(calculateFundPool(directCompanyClaimData).currentBalance, 700, 'Direct participant claim should not enter pool');
+assert.equal(calculateFinalClosure(directCompanyClaimData).rows.find((row) => row.participantId === 'cc1').companyDirectReimbursement, 100, 'Direct participant reimbursement should adjust final closure row');
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');

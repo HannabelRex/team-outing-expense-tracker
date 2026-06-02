@@ -1204,7 +1204,12 @@ function statusBadge(status) {
     'partially-collected': 'bg-blue-50 text-blue-700 ring-blue-200',
     collected: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
     'over-collected': 'bg-purple-50 text-purple-700 ring-purple-200',
-    settled: 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+    settled: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    draft: 'bg-slate-100 text-slate-700 ring-slate-200',
+    submitted: 'bg-blue-50 text-blue-700 ring-blue-200',
+    'partially-received': 'bg-purple-50 text-purple-700 ring-purple-200',
+    received: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    reopened: 'bg-amber-50 text-amber-700 ring-amber-200'
   };
 
   return `inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles[status] || 'bg-slate-100 text-slate-700 ring-slate-200'}`;
@@ -1379,6 +1384,7 @@ function Dashboard({ data, activeTheme }) {
   const finalClosure = data.finalClosure || {};
   const collection = dashboard.budgetCollection || {};
   const fundPool = dashboard.fundPool || {};
+  const companyClaims = dashboard.companyClaims || {};
   const pendingExpenses = (data.expenses || []).filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
 
   const totalBudget = Number(dashboard.totalBudget || 0);
@@ -1389,6 +1395,7 @@ function Dashboard({ data, activeTheme }) {
   const expectedTotal = Number(collection.expectedTotal || 0);
   const pendingCollection = Number(collection.pendingTotal || 0);
   const poolSpent = Number(fundPool.poolExpenseTotal || 0);
+  const companyReceived = Number(companyClaims.totalReceived || 0);
   const closureRows = finalClosure.rows || [];
   const closurePendingCount = Number(finalClosure.pendingCount ?? (closureRows.filter((row) => row.completionStatus === 'pending').length || 0));
   const closureCompletedCount = Number(finalClosure.completedCount || 0);
@@ -1431,7 +1438,7 @@ function Dashboard({ data, activeTheme }) {
               <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Event health</p>
               <h2 className="mt-1 text-xl font-black text-slate-950">{event.name || 'Current outing'} financial snapshot</h2>
               <p className="mt-2 text-sm font-semibold text-slate-600">
-                {budgetMessage} · Pool balance {money(poolBalance, currency)} · {collectionMessage} · {closureMessage}
+                {budgetMessage} · Pool balance {money(poolBalance, currency)} · Company claims received {money(companyReceived, currency)} · {collectionMessage} · {closureMessage}
               </p>
             </div>
           </div>
@@ -1439,6 +1446,7 @@ function Dashboard({ data, activeTheme }) {
             <span className={`rounded-full px-3 py-2 text-xs font-black ${dashboard.isOverBudget ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{dashboard.isOverBudget ? 'Budget exceeded' : 'Within budget'}</span>
             <span className={`rounded-full px-3 py-2 text-xs font-black ${pendingCollection > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{pendingCollection > 0 ? 'Collection pending' : 'Fully collected'}</span>
             <span className={`rounded-full px-3 py-2 text-xs font-black ${poolBalance < 0 ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{poolBalance < 0 ? 'Pool deficit' : 'Pool available'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${companyClaims.expenseLockActive ? 'bg-amber-100 text-amber-700' : companyReceived > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>{companyClaims.expenseLockActive ? 'Claim locked' : companyReceived > 0 ? 'Claim received' : 'No claim received'}</span>
             <span className={`rounded-full px-3 py-2 text-xs font-black ${closurePendingCount > 0 || closureRows.length === 0 ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'}`}>{closureRows.length === 0 ? 'Closure not calculated' : closurePendingCount > 0 ? 'Closure pending' : 'Closure complete'}</span>
           </div>
         </div>
@@ -1452,9 +1460,10 @@ function Dashboard({ data, activeTheme }) {
       </div>
 
       <Section title="Financial flow" icon={WalletCards}>
-        <div className="grid gap-4 lg:grid-cols-4">
+        <div className="grid gap-4 lg:grid-cols-5">
           <DashboardFlowStep icon={WalletCards} label="Budget planned" value={money(totalBudget, currency)} helper="Budget tab total" color={chartTheme.primary} />
           <DashboardFlowStep icon={Users} label="Collected" value={money(collectedTotal, currency)} helper={`${collection.participantCount || data.participants?.length || 0} participant${(collection.participantCount || data.participants?.length || 0) === 1 ? '' : 's'}`} color={chartTheme.secondary || chartTheme.accent} />
+          <DashboardFlowStep icon={FileText} label="Company claims" value={money(companyReceived, currency)} helper={companyClaims.expenseLockActive ? 'Expenses locked by claim' : 'Received after trip'} color="#7C3AED" />
           <DashboardFlowStep icon={Receipt} label="Spent" value={money(poolSpent || totalSpent, currency)} helper={`${fundPool.poolExpenseCount || 0} pool expense${(fundPool.poolExpenseCount || 0) === 1 ? '' : 's'}`} color={chartTheme.accent} />
           <DashboardFlowStep icon={CheckCircle2} label="Remaining" value={money(poolBalance, currency)} helper={closureRows.length > 0 ? `Closure ${closureCompletedCount}/${closureTotalCount || 0}` : 'Closure not calculated'} color={poolBalance < 0 ? '#E11D48' : '#059669'} />
         </div>
@@ -1483,6 +1492,7 @@ function Dashboard({ data, activeTheme }) {
           <div className="space-y-3 text-sm font-semibold text-slate-600">
             <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Expected collection</span><strong className="text-slate-950">{money(expectedTotal, currency)}</strong></div>
             <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Pending collection</span><strong className={pendingCollection > 0 ? 'text-rose-700' : 'text-emerald-700'}>{money(pendingCollection, currency)}</strong></div>
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Company claims received</span><strong className={companyReceived > 0 ? 'text-emerald-700' : 'text-slate-950'}>{money(companyReceived, currency)}</strong></div>
             <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Reimbursed / refunded</span><strong className="text-slate-950">{money(Number(fundPool.reimbursementTotal || 0) + Number(fundPool.refundTotal || 0), currency)}</strong></div>
             <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Pending approvals</span><strong className={pendingExpenses.length > 0 ? 'text-amber-700' : 'text-emerald-700'}>{pendingExpenses.length}</strong></div>
           </div>
@@ -2697,6 +2707,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
     && form.approvalStatus !== 'rejected'
     && Number.isFinite(enteredPoolAmount)
     && enteredPoolAmount > availablePoolBalance + 0.009;
+  const companyClaims = data.dashboard?.companyClaims || {};
+  const expensesLockedByClaim = Boolean(companyClaims.expenseLockActive);
 
   const expenseRows = useMemo(() => {
     const categoryMap = new Map(data.categories.map((category) => [category.id, category.name]));
@@ -2988,6 +3000,9 @@ function Expenses({ data, reload, setToast, isOnline }) {
     setBusy(true);
     try {
       const payload = buildExpensePayload(form);
+      if (expensesLockedByClaim) {
+        throw new Error(`Expenses are locked because the company claim ${companyClaims.lockedClaimTitle || ''} is ${claimStatusLabel(companyClaims.lockedClaimStatus || 'submitted')}. Reopen it from Claims before changing expenses.`);
+      }
       if (payload.paymentSource === 'pool' && !data.event?.financierParticipantId) {
         throw new Error('Set the common pool handler/financier in Event setup before recording an expense from the team fund pool.');
       }
@@ -3049,6 +3064,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
   return (
     <div className="space-y-6">
       <Section title={editingExpenseId ? 'Edit expense' : 'Record an expense'} icon={Receipt} action={editingExpenseId && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
+        {expensesLockedByClaim && <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">Expenses are locked because the company claim “{companyClaims.lockedClaimTitle || 'Company claim'}” is {claimStatusLabel(companyClaims.lockedClaimStatus || 'submitted')}. Reopen it from the Claims tab before adding, editing, approving, rejecting, or deleting expenses.</div>}
         {!isOnline && <div className="mb-4 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-900 ring-1 ring-amber-200">Offline mode: new expenses and receipt files are saved as local drafts and will sync after reconnecting. Existing expense edits still wait for the server, because reality insists.</div>}
         <form onSubmit={saveExpense} className="grid gap-4 lg:grid-cols-3">
           <label className="field-label">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
@@ -3137,7 +3153,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
 
           <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.isRecurring} onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })} /> Recurring/shared expense</label>
-          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy || poolExpenseExceedsBalance}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {!isOnline && !editingExpenseId ? 'Save offline draft' : editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
+          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy || poolExpenseExceedsBalance || expensesLockedByClaim}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {!isOnline && !editingExpenseId ? 'Save offline draft' : editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
         </form>
       </Section>
 
@@ -3219,10 +3235,10 @@ function Expenses({ data, reload, setToast, isOnline }) {
                     <td className="p-3"><span className={statusBadge(expense.approvalStatus)}>{expense.approvalStatus}</span></td>
                     <td className="p-3">
                       <div className="flex flex-wrap gap-2">
-                        <button className="btn-ghost" type="button" onClick={() => startEditExpense(expense)}><Pencil size={15} /> Edit</button>
-                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'approved')} disabled={busy}>Approve</button>
-                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'rejected')} disabled={busy}>Reject</button>
-                        <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteExpense(expense.id)} disabled={busy}><Trash2 size={15} /> Delete</button>
+                        <button className="btn-ghost" type="button" onClick={() => startEditExpense(expense)} disabled={expensesLockedByClaim}><Pencil size={15} /> Edit</button>
+                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'approved')} disabled={busy || expensesLockedByClaim}>Approve</button>
+                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'rejected')} disabled={busy || expensesLockedByClaim}>Reject</button>
+                        <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteExpense(expense.id)} disabled={busy || expensesLockedByClaim}><Trash2 size={15} /> Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -3530,6 +3546,7 @@ function FinalOutingClosure({ data, reload, setToast }) {
               <th className="p-3">Pool paid</th>
               <th className="p-3">Pool refund</th>
               <th className="p-3">Settlement adjustment</th>
+              <th className="p-3">Company direct</th>
               <th className="p-3">Pending collection</th>
               <th className="p-3">Final result</th>
               <th className="p-3">Status</th>
@@ -3538,7 +3555,7 @@ function FinalOutingClosure({ data, reload, setToast }) {
           </thead>
           <tbody>
             {(closure.rows || []).length === 0 ? (
-              <tr><td colSpan={canManageClosure ? 8 : 7} className="p-6 text-center text-slate-500">Calculate final closure when the outing is done. The table will show refunds, collections, and settlement adjustments.</td></tr>
+              <tr><td colSpan={canManageClosure ? 9 : 8} className="p-6 text-center text-slate-500">Calculate final closure when the outing is done. The table will show refunds, collections, claim adjustments, and settlement adjustments.</td></tr>
             ) : (closure.rows || []).map((row) => {
               const form = forms[row.participantId] || { mode: 'UPI', reference: '', note: '' };
               const isClosed = ['refund-paid', 'amount-collected', 'waived', 'settled'].includes(row.completionStatus);
@@ -3555,6 +3572,10 @@ function FinalOutingClosure({ data, reload, setToast }) {
                     <div className={Number(row.settlementAdjustment || 0) >= 0 ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>{wholeMoney(row.settlementAdjustmentRounded ?? row.settlementAdjustment, currency)}</div>
                     {exactAmountNote(row.settlementAdjustmentRounded ?? row.settlementAdjustment, row.settlementAdjustment, currency) && <div className="text-xs text-slate-500">{exactAmountNote(row.settlementAdjustmentRounded ?? row.settlementAdjustment, row.settlementAdjustment, currency)}</div>}
                     <div className="text-xs text-slate-500">Receivable {money(row.settlementReceivable, currency)} · Payable {money(row.settlementPayable, currency)}</div>
+                  </td>
+                  <td className="p-3">
+                    <div className="font-bold text-rose-700">{wholeMoney(row.companyDirectReimbursementRounded ?? row.companyDirectReimbursement, currency)}</div>
+                    <div className="text-xs text-slate-500">Already paid by company</div>
                   </td>
                   <td className="p-3 font-bold text-rose-700">{wholeMoney(row.pendingCollectionRounded ?? row.pendingCollection, currency)}<div className="text-xs font-normal text-slate-500">Exact {money(row.pendingCollection, currency)}</div></td>
                   <td className="p-3">
@@ -3593,6 +3614,348 @@ function FinalOutingClosure({ data, reload, setToast }) {
         </table>
       </div>
     </Section>
+  );
+}
+
+
+function claimTypeLabel(type) {
+  const labels = {
+    'fixed-pool': 'Fixed to pool',
+    financier: 'Paid to financier',
+    'category-based': 'Category based',
+    percentage: 'Percentage based',
+    'direct-participant': 'Paid to participants'
+  };
+  return labels[type] || type || 'Claim';
+}
+
+function claimStatusLabel(status) {
+  const labels = {
+    draft: 'Draft',
+    submitted: 'Submitted',
+    approved: 'Approved',
+    'partially-received': 'Partially received',
+    received: 'Received',
+    rejected: 'Rejected',
+    reopened: 'Reopened'
+  };
+  return labels[status] || status || 'Draft';
+}
+
+function defaultClaimForm(data) {
+  return {
+    id: '',
+    title: 'Company outing reimbursement',
+    type: 'fixed-pool',
+    status: 'draft',
+    expectedAmount: '',
+    approvedAmount: '',
+    receivedAmount: '',
+    receivedByParticipantId: data.event?.financierParticipantId || data.participants?.[0]?.id || '',
+    mode: 'Bank transfer',
+    reference: '',
+    receivedAt: new Date().toISOString().slice(0, 10),
+    submittedAt: '',
+    approvedAt: '',
+    percentage: '',
+    capAmount: '',
+    categoryIds: [],
+    participantPayments: [],
+    note: ''
+  };
+}
+
+function Claims({ data, reload, setToast }) {
+  const currency = data.event.currency;
+  const currentRole = data.currentUser?.role || 'member';
+  const canManageClaims = currentRole === 'admin' || currentRole === 'finance';
+  const canReopenClaims = currentRole === 'admin';
+  const claimsSummary = data.dashboard?.companyClaims || { claims: [] };
+  const claims = claimsSummary.claims || [];
+  const [form, setForm] = useState(() => defaultClaimForm(data));
+  const [busy, setBusy] = useState(false);
+  const [reopenConfirm, setReopenConfirm] = useState({});
+
+  function resetForm() {
+    setForm(defaultClaimForm(data));
+  }
+
+  function editClaim(claim) {
+    setForm({
+      ...defaultClaimForm(data),
+      id: claim.id,
+      title: claim.title || 'Company outing reimbursement',
+      type: claim.type || 'fixed-pool',
+      status: claim.status || 'draft',
+      expectedAmount: claim.expectedAmount ? String(claim.expectedAmount) : '',
+      approvedAmount: claim.approvedAmount ? String(claim.approvedAmount) : '',
+      receivedAmount: claim.rawReceivedAmount || claim.receivedAmount ? String(claim.rawReceivedAmount || claim.receivedAmount) : '',
+      receivedByParticipantId: claim.receivedByParticipantId || data.event?.financierParticipantId || data.participants?.[0]?.id || '',
+      mode: claim.mode || 'Bank transfer',
+      reference: claim.reference || '',
+      receivedAt: claim.receivedAt || new Date().toISOString().slice(0, 10),
+      submittedAt: claim.submittedAt || '',
+      approvedAt: claim.approvedAt || '',
+      percentage: claim.percentage ? String(claim.percentage) : '',
+      capAmount: claim.capAmount ? String(claim.capAmount) : '',
+      categoryIds: claim.categoryIds || [],
+      participantPayments: (claim.participantPayments || []).map((payment) => ({
+        participantId: payment.participantId,
+        amount: String(payment.amount || ''),
+        mode: payment.mode || 'Bank transfer',
+        reference: payment.reference || '',
+        receivedAt: payment.receivedAt || new Date().toISOString().slice(0, 10),
+        note: payment.note || ''
+      })),
+      note: claim.note || ''
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function toggleCategory(categoryId) {
+    const selected = new Set(form.categoryIds || []);
+    if (selected.has(categoryId)) selected.delete(categoryId);
+    else selected.add(categoryId);
+    setForm({ ...form, categoryIds: [...selected] });
+  }
+
+  function updateParticipantPayment(index, patch) {
+    const payments = [...(form.participantPayments || [])];
+    payments[index] = { ...payments[index], ...patch };
+    setForm({ ...form, participantPayments: payments });
+  }
+
+  function addParticipantPayment() {
+    setForm({
+      ...form,
+      participantPayments: [
+        ...(form.participantPayments || []),
+        { participantId: data.participants?.[0]?.id || '', amount: '', mode: 'Bank transfer', reference: '', receivedAt: new Date().toISOString().slice(0, 10), note: '' }
+      ]
+    });
+  }
+
+  function removeParticipantPayment(index) {
+    setForm({ ...form, participantPayments: (form.participantPayments || []).filter((_, paymentIndex) => paymentIndex !== index) });
+  }
+
+  function buildClaimPayload() {
+    return {
+      title: form.title,
+      type: form.type,
+      status: form.status,
+      expectedAmount: Number(form.expectedAmount || 0),
+      approvedAmount: Number(form.approvedAmount || 0),
+      receivedAmount: Number(form.receivedAmount || 0),
+      receivedByParticipantId: form.receivedByParticipantId,
+      mode: form.mode,
+      reference: form.reference,
+      receivedAt: form.receivedAt,
+      submittedAt: form.submittedAt,
+      approvedAt: form.approvedAt,
+      percentage: Number(form.percentage || 0),
+      capAmount: Number(form.capAmount || 0),
+      categoryIds: form.categoryIds || [],
+      participantPayments: (form.participantPayments || []).map((payment) => ({ ...payment, amount: Number(payment.amount || 0) })).filter((payment) => payment.participantId && payment.amount > 0),
+      note: form.note
+    };
+  }
+
+  async function saveClaim(event) {
+    event.preventDefault();
+    if (!canManageClaims) return;
+    setBusy(true);
+    try {
+      const payload = buildClaimPayload();
+      if (payload.type !== 'direct-participant' && ['partially-received', 'received'].includes(payload.status) && payload.receivedAmount <= 0) {
+        throw new Error('Enter the received reimbursement amount before marking the claim received. Corporate promises do not count as cash.');
+      }
+      if (payload.type === 'direct-participant' && ['partially-received', 'received'].includes(payload.status) && payload.participantPayments.length === 0) {
+        throw new Error('Add at least one participant payment for direct participant reimbursement.');
+      }
+      await api(form.id ? `/company-claims/${form.id}` : '/company-claims', {
+        method: form.id ? 'PUT' : 'POST',
+        body: JSON.stringify(payload)
+      });
+      setToast(form.id ? 'Company claim updated.' : 'Company claim created. Expenses will lock after submission.');
+      resetForm();
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteClaim(claim) {
+    if (!window.confirm(`Delete claim ${claim.title}?`)) return;
+    setBusy(true);
+    try {
+      const confirmQuery = claim.locksExpenses ? '?confirm=true' : '';
+      await api(`/company-claims/${claim.id}${confirmQuery}`, { method: 'DELETE' });
+      setToast('Company claim deleted. The reimbursement paperwork has been thrown into the digital shredder.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reopenClaim(claim) {
+    if ((reopenConfirm[claim.id] || '').trim() !== 'REOPEN CLAIM') {
+      setToast('Type REOPEN CLAIM before reopening expenses. Dangerous buttons enjoy ceremony.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/company-claims/${claim.id}/reopen-expenses`, {
+        method: 'POST',
+        body: JSON.stringify({ confirmation: 'REOPEN CLAIM' })
+      });
+      setToast('Claim reopened and expense editing unlocked. Re-submit after corrections.');
+      setReopenConfirm({ ...reopenConfirm, [claim.id]: '' });
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Section title="Claims overview" icon={WalletCards}>
+        <div className="grid gap-4 md:grid-cols-4">
+          <StatCard label="Expected claims" value={money(claimsSummary.totalExpected || 0, currency)} helper="Planned or claimable reimbursement" />
+          <StatCard label="Approved claims" value={money(claimsSummary.totalApproved || 0, currency)} helper="Approved by company" />
+          <StatCard label="Received" value={money(claimsSummary.totalReceived || 0, currency)} helper={`${money(claimsSummary.poolReceivedTotal || 0, currency)} added to pool`} />
+          <StatCard label="Net participant cost" value={money(claimsSummary.netParticipantCost || 0, currency)} helper="Approved spend minus received claims" />
+        </div>
+        {claimsSummary.expenseLockActive && (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+            Expenses are locked because claim “{claimsSummary.lockedClaimTitle}” is {claimStatusLabel(claimsSummary.lockedClaimStatus)}. Reopen the claim if you must change expenses. Yes, paperwork has consequences.
+          </div>
+        )}
+      </Section>
+
+      {canManageClaims && (
+        <Section title={form.id ? 'Edit claim' : 'Create company claim'} icon={FileText} action={form.id && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
+          <form onSubmit={saveClaim} className="grid gap-4 lg:grid-cols-3">
+            <label className="field-label lg:col-span-2">Claim title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
+            <label className="field-label">Reimbursement type<select className="input" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              <option value="fixed-pool">Fixed company reimbursement to pool</option>
+              <option value="financier">Company paid financier / pool handler</option>
+              <option value="category-based">Category-based reimbursement</option>
+              <option value="percentage">Percentage reimbursement</option>
+              <option value="direct-participant">Company paid participants directly</option>
+            </select></label>
+            <label className="field-label">Status<select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <option value="draft">Draft</option>
+              <option value="submitted">Submitted - lock expenses</option>
+              <option value="approved">Approved - expenses locked</option>
+              <option value="partially-received">Partially received</option>
+              <option value="received">Received</option>
+              <option value="rejected">Rejected</option>
+            </select></label>
+            <label className="field-label">Expected amount<input className="input" type="number" min="0" step="0.01" value={form.expectedAmount} onChange={(e) => setForm({ ...form, expectedAmount: e.target.value })} /></label>
+            <label className="field-label">Approved amount<input className="input" type="number" min="0" step="0.01" value={form.approvedAmount} onChange={(e) => setForm({ ...form, approvedAmount: e.target.value })} /></label>
+            {form.type !== 'direct-participant' && <label className="field-label">Received amount<input className="input" type="number" min="0" step="0.01" value={form.receivedAmount} onChange={(e) => setForm({ ...form, receivedAmount: e.target.value })} /></label>}
+
+            {(form.type === 'category-based' || form.type === 'percentage') && (
+              <div className="lg:col-span-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-black text-slate-900">Eligible categories</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(data.categories || []).map((category) => (
+                    <button key={category.id} type="button" className={form.categoryIds.includes(category.id) ? 'chip-on' : 'chip-off'} onClick={() => toggleCategory(category.id)}>{category.name}</button>
+                  ))}
+                </div>
+                {form.type === 'percentage' && <p className="mt-2 text-xs text-slate-500">Leave categories empty to calculate the percentage from all approved official expenses.</p>}
+              </div>
+            )}
+
+            {form.type === 'percentage' && (
+              <>
+                <label className="field-label">Percentage<input className="input" type="number" min="0" max="100" step="0.01" value={form.percentage} onChange={(e) => setForm({ ...form, percentage: e.target.value })} /></label>
+                <label className="field-label">Maximum cap<input className="input" type="number" min="0" step="0.01" value={form.capAmount} onChange={(e) => setForm({ ...form, capAmount: e.target.value })} /></label>
+              </>
+            )}
+
+            {form.type !== 'direct-participant' ? (
+              <>
+                <label className="field-label">Received by<select className="input" value={form.receivedByParticipantId} onChange={(e) => setForm({ ...form, receivedByParticipantId: e.target.value })}>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
+                <label className="field-label">Payment mode<select className="input" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}><option>Bank transfer</option><option>UPI</option><option>Cash</option><option>Cheque</option><option>Other</option></select></label>
+                <label className="field-label">Received date<input className="input" type="date" value={form.receivedAt} onChange={(e) => setForm({ ...form, receivedAt: e.target.value })} /></label>
+              </>
+            ) : (
+              <div className="lg:col-span-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-slate-900">Direct participant reimbursement</p>
+                    <p className="text-xs text-slate-600">These amounts do not enter the pool. They reduce each participant's final closure refund to avoid double reimbursement.</p>
+                  </div>
+                  <button className="btn-ghost" type="button" onClick={addParticipantPayment}><Plus size={15} /> Add participant payment</button>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {(form.participantPayments || []).map((payment, index) => (
+                    <div key={index} className="grid gap-2 md:grid-cols-5">
+                      <select className="input" value={payment.participantId} onChange={(e) => updateParticipantPayment(index, { participantId: e.target.value })}>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select>
+                      <input className="input" type="number" min="0" step="0.01" value={payment.amount} onChange={(e) => updateParticipantPayment(index, { amount: e.target.value })} placeholder="Amount" />
+                      <select className="input" value={payment.mode} onChange={(e) => updateParticipantPayment(index, { mode: e.target.value })}><option>Bank transfer</option><option>UPI</option><option>Cash</option><option>Cheque</option><option>Other</option></select>
+                      <input className="input" value={payment.reference} onChange={(e) => updateParticipantPayment(index, { reference: e.target.value })} placeholder="Reference" />
+                      <button className="btn-ghost text-rose-700" type="button" onClick={() => removeParticipantPayment(index)}><Trash2 size={15} /> Remove</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <label className="field-label lg:col-span-2">Reference<input className="input" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="Company transaction reference" /></label>
+            <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
+            <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy}>{form.id ? <Save size={16} /> : <Plus size={16} />} {form.id ? 'Update claim' : 'Create claim'}</button></div>
+          </form>
+        </Section>
+      )}
+
+      <Section title="Claim records" icon={FileText}>
+        {claims.length === 0 ? (
+          <EmptyState title="No company claims yet" body="Create a claim after the trip is ready to submit. Draft claims do not lock expenses; submitted claims do." />
+        ) : (
+          <div className="space-y-4">
+            {claims.map((claim) => (
+              <div key={claim.id} className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-lg font-black text-slate-950">{claim.title}</p>
+                      <span className={statusBadge(claim.status)}>{claimStatusLabel(claim.status)}</span>
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{claimTypeLabel(claim.type)}</span>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">Claimable {money(claim.claimableAmount || 0, currency)} · Approved {money(claim.approvedAmount || 0, currency)} · Received {money(claim.receivedAmount || 0, currency)}</p>
+                    <p className="mt-1 text-xs text-slate-500">{claim.addsToPool ? `${money(claim.poolReceivedAmount || 0, currency)} added to team fund pool` : `${money(claim.directParticipantAmount || 0, currency)} paid directly to participants`}</p>
+                    {claim.categoryNames?.length > 0 && <p className="mt-1 text-xs text-slate-500">Categories: {claim.categoryNames.join(', ')}</p>}
+                    {claim.reference && <p className="mt-1 text-xs text-slate-500">Ref: {claim.reference}</p>}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {canManageClaims && <button className="btn-ghost" type="button" onClick={() => editClaim(claim)} disabled={busy}><Pencil size={15} /> Edit</button>}
+                    {canManageClaims && <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteClaim(claim)} disabled={busy}><Trash2 size={15} /> Delete</button>}
+                  </div>
+                </div>
+                {claim.locksExpenses && canReopenClaims && (
+                  <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-sm font-bold text-amber-900">This claim is locking expense changes.</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <input className="input max-w-xs" value={reopenConfirm[claim.id] || ''} onChange={(e) => setReopenConfirm({ ...reopenConfirm, [claim.id]: e.target.value })} placeholder="Type REOPEN CLAIM" />
+                      <button className="btn-ghost" type="button" onClick={() => reopenClaim(claim)} disabled={busy}>Reopen expenses</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
   );
 }
 
@@ -5065,6 +5428,7 @@ function AppShell() {
         ['budget', 'Budget'],
         ['expenses', 'Expenses'],
         ['settlements', 'Settlements'],
+        ['claims', 'Claims'],
         ['reports', 'Reports']
       );
     }
@@ -5219,6 +5583,7 @@ function AppShell() {
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />}
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'claims' && <Claims data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} activeTheme={activeTheme} />}
         {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}

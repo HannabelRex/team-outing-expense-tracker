@@ -134,6 +134,172 @@ export function calculateBudgetCollections(data) {
 }
 
 
+
+export const COMPANY_CLAIM_STATUS_LABELS = {
+  draft: 'Draft',
+  submitted: 'Submitted',
+  approved: 'Approved',
+  'partially-received': 'Partially received',
+  received: 'Received',
+  rejected: 'Rejected',
+  reopened: 'Reopened'
+};
+
+export const COMPANY_CLAIM_TYPES = {
+  'fixed-pool': 'Fixed reimbursement to pool',
+  financier: 'Company paid financier',
+  'category-based': 'Category-based reimbursement',
+  percentage: 'Percentage reimbursement',
+  'direct-participant': 'Company paid participants directly'
+};
+
+export function isExpenseLockedByClaim(data = {}) {
+  return (Array.isArray(data.companyClaims) ? data.companyClaims : []).some((claim) =>
+    ['submitted', 'approved', 'partially-received', 'received'].includes(claim.status)
+  );
+}
+
+function normalizeParticipantClaimPayments(payments = []) {
+  if (!Array.isArray(payments)) return [];
+  return payments
+    .map((payment) => ({
+      id: payment.id || '',
+      participantId: payment.participantId || '',
+      amount: roundMoney(Number(payment.amount || 0)),
+      mode: payment.mode || payment.paymentMode || 'Bank transfer',
+      reference: payment.reference || '',
+      receivedAt: payment.receivedAt || payment.date || new Date().toISOString().slice(0, 10),
+      note: payment.note || '',
+      createdAt: payment.createdAt || null,
+      updatedAt: payment.updatedAt || null
+    }))
+    .filter((payment) => payment.participantId && Number.isFinite(payment.amount) && payment.amount > 0);
+}
+
+function approvedOfficialExpenses(data = {}) {
+  const expenses = Array.isArray(data.expenses) ? data.expenses : [];
+  return expenses.filter((expense) =>
+    (expense.approvalStatus || 'pending') === 'approved'
+    && !isPersonalExpense(expense)
+  );
+}
+
+function calculateClaimableAmount(claim = {}, data = {}) {
+  const type = claim.type || 'fixed-pool';
+  const expenses = approvedOfficialExpenses(data);
+
+  if (type === 'category-based') {
+    const selectedCategoryIds = new Set(Array.isArray(claim.categoryIds) ? claim.categoryIds : []);
+    if (selectedCategoryIds.size === 0) return 0;
+    return roundMoney(expenses
+      .filter((expense) => selectedCategoryIds.has(expense.categoryId))
+      .reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+  }
+
+  if (type === 'percentage') {
+    const selectedCategoryIds = new Set(Array.isArray(claim.categoryIds) ? claim.categoryIds : []);
+    const eligibleSpend = roundMoney(expenses
+      .filter((expense) => selectedCategoryIds.size === 0 || selectedCategoryIds.has(expense.categoryId))
+      .reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+    const percentage = Math.max(0, Number(claim.percentage || 0));
+    const rawAmount = roundMoney((eligibleSpend * percentage) / 100);
+    const capAmount = Number(claim.capAmount || 0);
+    return capAmount > 0 ? roundMoney(Math.min(rawAmount, capAmount)) : rawAmount;
+  }
+
+  if (type === 'direct-participant') {
+    const directTotal = normalizeParticipantClaimPayments(claim.participantPayments)
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    return roundMoney(Number(claim.expectedAmount || directTotal || 0));
+  }
+
+  return roundMoney(Number(claim.expectedAmount || 0));
+}
+
+export function calculateCompanyClaims(data = {}) {
+  const rawClaims = Array.isArray(data.companyClaims) ? data.companyClaims : [];
+  const participantMap = new Map((Array.isArray(data.participants) ? data.participants : []).map((participant) => [participant.id, participant]));
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  const categoryMap = new Map(categories.map((category) => [category.id, category.name]));
+  const approvedSpend = roundMoney(approvedOfficialExpenses(data).reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+
+  const claims = rawClaims.map((claim) => {
+    const type = claim.type || 'fixed-pool';
+    const status = claim.status || 'draft';
+    const participantPayments = normalizeParticipantClaimPayments(claim.participantPayments);
+    const claimableAmount = calculateClaimableAmount({ ...claim, type }, data);
+    const approvedAmount = roundMoney(Number(claim.approvedAmount || 0) || claimableAmount || Number(claim.expectedAmount || 0));
+    const rawReceivedAmount = type === 'direct-participant'
+      ? roundMoney(participantPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))
+      : roundMoney(Number(claim.receivedAmount || 0));
+    const isReceivedStatus = ['partially-received', 'received'].includes(status);
+    const receivedAmount = isReceivedStatus ? rawReceivedAmount : 0;
+    const addsToPool = type !== 'direct-participant';
+    const poolReceivedAmount = addsToPool ? receivedAmount : 0;
+    const directParticipantAmount = addsToPool ? 0 : receivedAmount;
+    const selectedCategoryIds = Array.isArray(claim.categoryIds) ? claim.categoryIds : [];
+
+    return {
+      id: claim.id || '',
+      type,
+      typeLabel: COMPANY_CLAIM_TYPES[type] || type,
+      status,
+      statusLabel: COMPANY_CLAIM_STATUS_LABELS[status] || status,
+      title: claim.title || claim.name || 'Company reimbursement claim',
+      expectedAmount: roundMoney(Number(claim.expectedAmount || claimableAmount || 0)),
+      claimableAmount,
+      approvedAmount,
+      receivedAmount,
+      rawReceivedAmount,
+      poolReceivedAmount,
+      directParticipantAmount,
+      receivedByParticipantId: claim.receivedByParticipantId || '',
+      receivedByName: participantMap.get(claim.receivedByParticipantId)?.name || '',
+      mode: claim.mode || claim.paymentMode || 'Bank transfer',
+      reference: claim.reference || '',
+      note: claim.note || '',
+      percentage: Number(claim.percentage || 0),
+      capAmount: roundMoney(Number(claim.capAmount || 0)),
+      categoryIds: selectedCategoryIds,
+      categoryNames: selectedCategoryIds.map((id) => categoryMap.get(id) || id),
+      participantPayments: participantPayments.map((payment) => ({
+        ...payment,
+        participantName: participantMap.get(payment.participantId)?.name || ''
+      })),
+      submittedAt: claim.submittedAt || '',
+      approvedAt: claim.approvedAt || '',
+      receivedAt: claim.receivedAt || '',
+      createdAt: claim.createdAt || null,
+      updatedAt: claim.updatedAt || null,
+      locksExpenses: ['submitted', 'approved', 'partially-received', 'received'].includes(status),
+      addsToPool
+    };
+  });
+
+  const poolReceivedTotal = roundMoney(claims.reduce((sum, claim) => sum + Number(claim.poolReceivedAmount || 0), 0));
+  const directParticipantTotal = roundMoney(claims.reduce((sum, claim) => sum + Number(claim.directParticipantAmount || 0), 0));
+  const totalReceived = roundMoney(poolReceivedTotal + directParticipantTotal);
+  const totalApproved = roundMoney(claims.reduce((sum, claim) => sum + Number(claim.approvedAmount || 0), 0));
+  const totalExpected = roundMoney(claims.reduce((sum, claim) => sum + Number(claim.expectedAmount || 0), 0));
+  const expenseLockActive = claims.some((claim) => claim.locksExpenses);
+  const lockedClaim = claims.find((claim) => claim.locksExpenses) || null;
+
+  return {
+    claims,
+    approvedSpend,
+    totalExpected,
+    totalApproved,
+    totalReceived,
+    poolReceivedTotal,
+    directParticipantTotal,
+    netParticipantCost: roundMoney(Math.max(0, approvedSpend - totalReceived)),
+    expenseLockActive,
+    lockedClaimId: lockedClaim?.id || '',
+    lockedClaimTitle: lockedClaim?.title || '',
+    lockedClaimStatus: lockedClaim?.status || ''
+  };
+}
+
 function normalizeFundTransactions(transactions = []) {
   if (!Array.isArray(transactions)) return [];
 
@@ -171,13 +337,15 @@ export function calculateFundPool(data) {
   const poolExpenses = officialExpenses.filter(isPoolExpense);
   const personalExpenses = officialExpenses.filter((expense) => !isPoolExpense(expense));
   const transactions = normalizeFundTransactions(data.fundTransactions);
+  const companyClaims = calculateCompanyClaims(data);
 
   const poolExpenseTotal = roundMoney(poolExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
   const personalExpenseTotal = roundMoney(personalExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
   const reimbursementTotal = roundMoney(transactions.filter((item) => item.type === 'reimbursement').reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0));
   const refundTotal = roundMoney(transactions.filter((item) => item.type === 'refund').reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0));
   const adjustmentTotal = roundMoney(transactions.filter((item) => item.type === 'adjustment').reduce((sum, item) => sum + Number(item.amount || 0), 0));
-  const currentBalance = roundMoney(Number(budgetCollection.collectedTotal || 0) - poolExpenseTotal - reimbursementTotal - refundTotal + adjustmentTotal);
+  const companyReimbursementTotal = roundMoney(Number(companyClaims.poolReceivedTotal || 0));
+  const currentBalance = roundMoney(Number(budgetCollection.collectedTotal || 0) + companyReimbursementTotal - poolExpenseTotal - reimbursementTotal - refundTotal + adjustmentTotal);
 
   const collectionLedger = (budgetCollection.participants || []).flatMap((collection) => (collection.payments || []).map((payment) => ({
     id: payment.id || `collection-${collection.participantId}-${payment.paidAt}-${payment.amount}`,
@@ -208,6 +376,22 @@ export function calculateFundPool(data) {
     expenseId: expense.id
   }));
 
+  const companyClaimLedger = (companyClaims.claims || [])
+    .filter((claim) => Number(claim.poolReceivedAmount || 0) > 0)
+    .map((claim) => ({
+      id: claim.id || `company-claim-${claim.receivedAt || claim.updatedAt || claim.createdAt || ''}`,
+      type: 'company-reimbursement',
+      direction: 'inflow',
+      date: claim.receivedAt || claim.updatedAt?.slice?.(0, 10) || claim.createdAt?.slice?.(0, 10) || '',
+      amount: roundMoney(Number(claim.poolReceivedAmount || 0)),
+      participantId: claim.receivedByParticipantId || '',
+      participantName: claim.receivedByName || participantMap.get(claim.receivedByParticipantId)?.name || 'Company reimbursement',
+      mode: claim.mode || '',
+      reference: claim.reference || '',
+      note: claim.title || claim.typeLabel || 'Company reimbursement received',
+      source: 'companyClaim'
+    }));
+
   const transactionLedger = transactions.map((transaction) => {
     const outflow = transaction.type === 'reimbursement' || transaction.type === 'refund';
     return {
@@ -226,7 +410,7 @@ export function calculateFundPool(data) {
     };
   });
 
-  const ledger = [...collectionLedger, ...expenseLedger, ...transactionLedger]
+  const ledger = [...collectionLedger, ...companyClaimLedger, ...expenseLedger, ...transactionLedger]
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.id || '').localeCompare(String(a.id || '')));
 
   return {
@@ -238,6 +422,7 @@ export function calculateFundPool(data) {
     reimbursementTotal,
     refundTotal,
     adjustmentTotal,
+    companyReimbursementTotal,
     currentBalance,
     poolExpenseCount: poolExpenses.length,
     personalExpenseCount: personalExpenses.length,
@@ -267,6 +452,7 @@ export function calculateFinalClosure(data) {
   const participants = Array.isArray(data.participants) ? data.participants : [];
   const budgetCollection = calculateBudgetCollections(data);
   const fundPool = calculateFundPool(data);
+  const companyClaims = calculateCompanyClaims(data);
   const settlementPlan = generateSettlementPlan(data);
   const storedClosure = data.finalClosure && typeof data.finalClosure === 'object' ? data.finalClosure : {};
   const recordMap = new Map(normalizeFinalClosureRecords(storedClosure.records).map((record) => [record.participantId, record]));
@@ -274,6 +460,17 @@ export function calculateFinalClosure(data) {
   const collectionMap = new Map((budgetCollection.participants || []).map((row) => [row.participantId, row]));
   const settlementPayableMap = new Map(participants.map((participant) => [participant.id, 0]));
   const settlementReceivableMap = new Map(participants.map((participant) => [participant.id, 0]));
+  const directCompanyReimbursementMap = new Map(participants.map((participant) => [participant.id, 0]));
+
+  for (const claim of companyClaims.claims || []) {
+    if (claim.type !== 'direct-participant' || !['partially-received', 'received'].includes(claim.status)) continue;
+    for (const payment of claim.participantPayments || []) {
+      directCompanyReimbursementMap.set(
+        payment.participantId,
+        roundMoney((directCompanyReimbursementMap.get(payment.participantId) || 0) + Number(payment.amount || 0))
+      );
+    }
+  }
 
   for (const settlement of settlementPlan.settlements || []) {
     const remainingAmount = roundMoney(Math.max(0, Number(settlement.amount || 0) - Number(settlement.paidAmount || 0)));
@@ -307,7 +504,8 @@ export function calculateFinalClosure(data) {
     const settlementPayable = roundMoney(settlementPayableMap.get(participant.id) || 0);
     const settlementReceivable = roundMoney(settlementReceivableMap.get(participant.id) || 0);
     const settlementAdjustment = roundMoney(settlementReceivable - settlementPayable);
-    const finalAmount = roundMoney(poolRefundShare - poolDeficitShare + settlementAdjustment - pendingCollection);
+    const companyDirectReimbursement = roundMoney(directCompanyReimbursementMap.get(participant.id) || 0);
+    const finalAmount = roundMoney(poolRefundShare - poolDeficitShare + settlementAdjustment - pendingCollection - companyDirectReimbursement);
     const absoluteFinalAmount = roundMoney(Math.abs(finalAmount));
     const poolRefundShareRounded = roundWholeMoney(poolRefundShare);
     const poolDeficitShareRounded = roundWholeMoney(poolDeficitShare);
@@ -341,6 +539,8 @@ export function calculateFinalClosure(data) {
       settlementReceivable,
       settlementAdjustment,
       settlementAdjustmentRounded,
+      companyDirectReimbursement,
+      companyDirectReimbursementRounded: roundWholeMoney(companyDirectReimbursement),
       pendingCollectionRounded,
       finalAmount,
       finalAmountRounded,
@@ -399,6 +599,10 @@ export function calculateFinalClosure(data) {
     totalPendingCollection: budgetCollection.pendingTotal,
     totalSettlementPayable: roundMoney(rows.reduce((sum, row) => sum + row.settlementPayable, 0)),
     totalSettlementReceivable: roundMoney(rows.reduce((sum, row) => sum + row.settlementReceivable, 0)),
+    companyClaims,
+    companyReimbursementReceived: companyClaims.totalReceived,
+    companyPoolReimbursementReceived: companyClaims.poolReceivedTotal,
+    companyDirectReimbursementReceived: companyClaims.directParticipantTotal,
     totalRefundDue,
     totalRefundDueRounded,
     totalRefundRoundingAdjustment,
@@ -632,6 +836,7 @@ export function calculateDashboard(data, options = {}) {
     spendingByPaymentMethod,
     budgetCollection: calculateBudgetCollections(data),
     fundPool: calculateFundPool(data),
+    companyClaims: calculateCompanyClaims(data),
     expenses: approvedOrPendingExpenses.map((expense) => ({
       ...expense,
       categoryName: isPersonalExpense(expense) ? PERSONAL_CATEGORY_NAME : (categoryMap.get(expense.categoryId)?.name || 'Uncategorized'),
@@ -724,6 +929,7 @@ export function buildExpenseReport(data) {
     },
     budgetCollection: dashboard.budgetCollection,
     fundPool: dashboard.fundPool,
+    companyClaims: dashboard.companyClaims,
     finalClosure: calculateFinalClosure(data),
     categoryWiseExpenses: dashboard.categorySpending,
     participantWiseContribution: dashboard.participantBalances,

@@ -13,6 +13,8 @@ import {
   calculateBudgetCollections,
   calculateFundPool,
   calculateFinalClosure,
+  calculateCompanyClaims,
+  isExpenseLockedByClaim,
   calculatePlannedBudget,
   roundCollectionAmount,
   generateSettlementPlan,
@@ -118,6 +120,7 @@ function buildEventRecord(input = {}) {
     settlements: Array.isArray(input.settlements) ? input.settlements : [],
     budgetCollections: Array.isArray(input.budgetCollections) ? input.budgetCollections : [],
     fundTransactions: Array.isArray(input.fundTransactions) ? input.fundTransactions : [],
+    companyClaims: Array.isArray(input.companyClaims) ? input.companyClaims : [],
     finalClosure: input.finalClosure && typeof input.finalClosure === 'object' ? input.finalClosure : { status: 'not-calculated', records: [] },
     notifications: Array.isArray(input.notifications) ? input.notifications : [],
     auditLog: Array.isArray(input.auditLog) ? input.auditLog : Array.isArray(input.audit) ? input.audit : []
@@ -136,6 +139,7 @@ function normalizeMultiEventStore(data) {
       settlements: data.settlements || [],
       budgetCollections: data.budgetCollections || [],
       fundTransactions: data.fundTransactions || [],
+      companyClaims: data.companyClaims || [],
       finalClosure: data.finalClosure || { status: 'not-calculated', records: [] },
       notifications: data.notifications || []
     });
@@ -332,6 +336,81 @@ function assertActiveEventEditable(eventRecord) {
     error.statusCode = 409;
     throw error;
   }
+}
+
+function expenseLockInfo(eventRecord) {
+  const claims = calculateCompanyClaims(eventRecord);
+  return {
+    locked: Boolean(claims.expenseLockActive),
+    claimId: claims.lockedClaimId || '',
+    claimTitle: claims.lockedClaimTitle || 'Company claim',
+    claimStatus: claims.lockedClaimStatus || ''
+  };
+}
+
+function assertExpensesUnlockedForClaim(eventRecord) {
+  const info = expenseLockInfo(eventRecord);
+  if (!info.locked) return;
+  const error = new Error(`Expenses are locked because the company claim "${info.claimTitle}" is ${info.claimStatus}. Reopen the claim from the Claims tab before changing expenses.`);
+  error.statusCode = 409;
+  throw error;
+}
+
+function normalizeCompanyClaimPayload(body = {}, existingClaim = {}) {
+  const input = sanitizeObject(body);
+  const now = new Date().toISOString();
+  const type = input.type || existingClaim.type || 'fixed-pool';
+  const allowedTypes = ['fixed-pool', 'financier', 'category-based', 'percentage', 'direct-participant'];
+  if (!allowedTypes.includes(type)) {
+    const error = new Error('Unsupported company claim type.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const status = input.status || existingClaim.status || 'draft';
+  const allowedStatuses = ['draft', 'submitted', 'approved', 'partially-received', 'received', 'rejected', 'reopened'];
+  if (!allowedStatuses.includes(status)) {
+    const error = new Error('Unsupported company claim status.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const participantPayments = Array.isArray(body.participantPayments)
+    ? body.participantPayments.map((payment) => ({
+      id: payment.id || `claimpay-${nanoid(8)}`,
+      participantId: payment.participantId || '',
+      amount: roundMoney(Number(payment.amount || 0)),
+      mode: payment.mode || payment.paymentMode || 'Bank transfer',
+      reference: payment.reference || '',
+      receivedAt: payment.receivedAt || payment.date || now.slice(0, 10),
+      note: payment.note || '',
+      createdAt: payment.createdAt || now,
+      updatedAt: now
+    })).filter((payment) => payment.participantId && payment.amount > 0)
+    : (Array.isArray(existingClaim.participantPayments) ? existingClaim.participantPayments : []);
+
+  return {
+    ...existingClaim,
+    type,
+    status,
+    title: input.title || existingClaim.title || 'Company reimbursement claim',
+    expectedAmount: roundMoney(Number(input.expectedAmount ?? existingClaim.expectedAmount ?? 0)),
+    approvedAmount: roundMoney(Number(input.approvedAmount ?? existingClaim.approvedAmount ?? 0)),
+    receivedAmount: roundMoney(Number(input.receivedAmount ?? existingClaim.receivedAmount ?? 0)),
+    receivedByParticipantId: input.receivedByParticipantId || existingClaim.receivedByParticipantId || '',
+    mode: input.mode || existingClaim.mode || 'Bank transfer',
+    reference: input.reference ?? existingClaim.reference ?? '',
+    note: input.note ?? existingClaim.note ?? '',
+    percentage: Number(input.percentage ?? existingClaim.percentage ?? 0),
+    capAmount: roundMoney(Number(input.capAmount ?? existingClaim.capAmount ?? 0)),
+    categoryIds: Array.isArray(body.categoryIds) ? body.categoryIds : (Array.isArray(existingClaim.categoryIds) ? existingClaim.categoryIds : []),
+    participantPayments,
+    submittedAt: input.submittedAt || existingClaim.submittedAt || (status === 'submitted' ? now : ''),
+    approvedAt: input.approvedAt || existingClaim.approvedAt || (status === 'approved' ? now : ''),
+    receivedAt: input.receivedAt || existingClaim.receivedAt || (['partially-received', 'received'].includes(status) ? now.slice(0, 10) : ''),
+    createdAt: existingClaim.createdAt || now,
+    updatedAt: now
+  };
 }
 
 function requireReceiptStorageConfig() {
@@ -2539,6 +2618,122 @@ app.delete('/api/budget-collections/:participantId/payments/:paymentId', asyncHa
 }));
 
 
+
+app.get('/api/company-claims', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  await writeStoreIfDirty(data);
+  res.json(calculateCompanyClaims(activeEvent));
+}));
+
+app.post('/api/company-claims', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.companyClaims = Array.isArray(activeEvent.companyClaims) ? activeEvent.companyClaims : [];
+  const claim = normalizeCompanyClaimPayload(req.body, { id: `claim-${nanoid(8)}` });
+  activeEvent.companyClaims.push(claim);
+  addAuditLog(activeEvent, currentUser, `company_claim.${claim.status}`, 'claim', `Created company reimbursement claim ${claim.title}.`, {
+    claimId: claim.id,
+    type: claim.type,
+    status: claim.status,
+    expectedAmount: claim.expectedAmount,
+    approvedAmount: claim.approvedAmount,
+    receivedAmount: claim.receivedAmount
+  });
+  await writeStore(data);
+  res.status(201).json(calculateCompanyClaims(activeEvent));
+}));
+
+app.put('/api/company-claims/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.companyClaims = Array.isArray(activeEvent.companyClaims) ? activeEvent.companyClaims : [];
+  const claim = requireExistingItem(activeEvent.companyClaims.find((item) => item.id === req.params.id), 'Company claim');
+  const beforeStatus = claim.status || 'draft';
+  const updatedClaim = normalizeCompanyClaimPayload(req.body, claim);
+  Object.assign(claim, updatedClaim);
+  if (claim.status === 'submitted' && !claim.submittedAt) claim.submittedAt = new Date().toISOString();
+  if (claim.status === 'approved' && !claim.approvedAt) claim.approvedAt = new Date().toISOString();
+  if (['partially-received', 'received'].includes(claim.status) && !claim.receivedAt) claim.receivedAt = new Date().toISOString().slice(0, 10);
+  if (claim.status !== beforeStatus && ['submitted', 'approved', 'partially-received', 'received'].includes(claim.status)) {
+    activeEvent.finalClosure = activeEvent.finalClosure && typeof activeEvent.finalClosure === 'object' ? activeEvent.finalClosure : {};
+    activeEvent.finalClosure.status = 'needs-recalculation';
+    activeEvent.finalClosure.updatedAt = new Date().toISOString();
+  }
+  addAuditLog(activeEvent, currentUser, `company_claim.${claim.status}`, 'claim', `Updated company reimbursement claim ${claim.title}.`, {
+    claimId: claim.id,
+    beforeStatus,
+    status: claim.status,
+    type: claim.type,
+    expectedAmount: claim.expectedAmount,
+    approvedAmount: claim.approvedAmount,
+    receivedAmount: claim.receivedAmount,
+    receivedBy: participantLabel(activeEvent, claim.receivedByParticipantId)
+  });
+  await writeStore(data);
+  res.json(calculateCompanyClaims(activeEvent));
+}));
+
+app.delete('/api/company-claims/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.companyClaims = Array.isArray(activeEvent.companyClaims) ? activeEvent.companyClaims : [];
+  const claim = requireExistingItem(activeEvent.companyClaims.find((item) => item.id === req.params.id), 'Company claim');
+  if (['submitted', 'approved', 'partially-received', 'received'].includes(claim.status) && req.query.confirm !== 'true') {
+    return res.status(409).json({ error: 'This claim is locking expenses. Reopen or confirm deletion before deleting it.' });
+  }
+  activeEvent.companyClaims = activeEvent.companyClaims.filter((item) => item.id !== claim.id);
+  addAuditLog(activeEvent, currentUser, 'company_claim.deleted', 'claim', `Deleted company reimbursement claim ${claim.title}.`, {
+    claimId: claim.id,
+    status: claim.status,
+    receivedAmount: claim.receivedAmount
+  });
+  await writeStore(data);
+  res.status(204).send();
+}));
+
+app.post('/api/company-claims/:id/reopen-expenses', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const confirmation = String(req.body.confirmation || '').trim();
+  if (confirmation !== 'REOPEN CLAIM') {
+    return res.status(400).json({ error: 'Type REOPEN CLAIM to reopen expenses for this company claim.' });
+  }
+  activeEvent.companyClaims = Array.isArray(activeEvent.companyClaims) ? activeEvent.companyClaims : [];
+  const claim = requireExistingItem(activeEvent.companyClaims.find((item) => item.id === req.params.id), 'Company claim');
+  const beforeStatus = claim.status || 'draft';
+  claim.status = 'reopened';
+  claim.updatedAt = new Date().toISOString();
+  activeEvent.finalClosure = activeEvent.finalClosure && typeof activeEvent.finalClosure === 'object' ? activeEvent.finalClosure : {};
+  activeEvent.finalClosure.status = 'needs-recalculation';
+  activeEvent.finalClosure.updatedAt = new Date().toISOString();
+  addAuditLog(activeEvent, currentUser, 'company_claim.expenses_reopened', 'claim', `Reopened expenses for company claim ${claim.title}.`, {
+    claimId: claim.id,
+    beforeStatus,
+    status: claim.status
+  });
+  await writeStore(data);
+  res.json(calculateCompanyClaims(activeEvent));
+}));
+
 app.get('/api/fund-pool', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
@@ -2643,6 +2838,7 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
   assertActiveEventEditable(activeEvent);
+  assertExpensesUnlockedForClaim(activeEvent);
   const isPersonalCategoryExpense = req.body.categoryId === PERSONAL_CATEGORY_ID || req.body.isPersonalExpense === true;
   const paymentSource = isPersonalCategoryExpense ? 'participant' : (req.body.paymentSource === 'pool' ? 'pool' : 'participant');
   if (paymentSource === 'pool' && !activeEvent.event.financierParticipantId) {
@@ -2698,6 +2894,7 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
   assertActiveEventEditable(activeEvent);
+  assertExpensesUnlockedForClaim(activeEvent);
   const expense = requireExistingItem(findById(activeEvent.expenses, req.params.id), 'Expense');
 
   if (!canManageExpense(currentUser, expense)) {
@@ -2787,6 +2984,7 @@ app.delete('/api/expenses/:id', asyncHandler(async (req, res) => {
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
   assertActiveEventEditable(activeEvent);
+  assertExpensesUnlockedForClaim(activeEvent);
   const expense = requireExistingItem(findById(activeEvent.expenses, req.params.id), 'Expense');
 
   if (!canManageExpense(currentUser, expense)) {
@@ -3591,6 +3789,24 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     ], report.fundPool.ledger || [], { emptyText: 'No fund ledger entries available.', fontSize: 7.5 });
   }
 
+  if (report.companyClaims) {
+    drawPdfSection(doc, 'Company claims');
+    drawKeyValueGrid(doc, [
+      { label: 'Expected claims', value: serverMoney(report.companyClaims.totalExpected || 0, currency) },
+      { label: 'Approved claims', value: serverMoney(report.companyClaims.totalApproved || 0, currency) },
+      { label: 'Received claims', value: serverMoney(report.companyClaims.totalReceived || 0, currency) },
+      { label: 'Net participant cost', value: serverMoney(report.companyClaims.netParticipantCost || 0, currency) }
+    ], currency);
+    drawSimpleTable(doc, [
+      { label: 'Claim', value: (row) => row.title || '-', weight: 1.8 },
+      { label: 'Type', value: (row) => pdfStatusLabel(row.typeLabel || row.type), weight: 1.2 },
+      { label: 'Status', value: (row) => pdfStatusLabel(row.status), weight: 1 },
+      { label: 'Approved', value: (row) => serverMoney(row.approvedAmount, currency), weight: 1 },
+      { label: 'Received', value: (row) => serverMoney(row.receivedAmount, currency), weight: 1 },
+      { label: 'Impact', value: (row) => row.addsToPool ? 'Adds to pool' : 'Direct participant', weight: 1.2 }
+    ], report.companyClaims.claims || [], { emptyText: 'No company claim records available.', fontSize: 7.5 });
+  }
+
   drawPdfSection(doc, 'Category-wise expenses');
   drawSimpleTable(doc, [
     { label: 'Category', key: 'name', weight: 2 },
@@ -3637,7 +3853,8 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     { label: 'Pool paid', value: (row) => serverMoney(row.paidToPool, currency), weight: 1 },
     { label: 'Pool refund', value: (row) => formatClosureAmount(row.poolRefundShareRounded, row.poolRefundShare, currency), weight: 1.25 },
     { label: 'Settle adj.', value: (row) => formatClosureAmount(row.settlementAdjustmentRounded, row.settlementAdjustment, currency), weight: 1.25 },
-    { label: 'Pending coll.', value: (row) => formatClosureAmount(row.pendingCollectionRounded, row.pendingCollection, currency), weight: 1.2 },
+    { label: 'Pending coll.', value: (row) => formatClosureAmount(row.pendingCollectionRounded, row.pendingCollection, currency), weight: 1.1 },
+    { label: 'Company direct', value: (row) => row.companyDirectReimbursement ? formatClosureAmount(row.companyDirectReimbursementRounded, row.companyDirectReimbursement, currency) : '-', weight: 1.1 },
     { label: 'Final result', value: (row) => `${row.finalAction === 'collect-due' ? 'Collect ' : row.finalAction === 'refund-due' ? 'Refund ' : 'Settled '}${formatClosureAmount(row.absoluteFinalAmountRounded, row.absoluteFinalAmount, currency)}`, weight: 1.45 },
     { label: 'Status', value: (row) => pdfStatusLabel(row.completionStatus), weight: 0.85 }
   ], report.finalClosure?.rows || [], { emptyText: 'No final closure calculation available.', fontSize: 6.5, rowHeight: 28 });
@@ -3737,6 +3954,12 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
       fundPoolCollected: report.fundPool?.collectedTotal ?? '',
       fundPoolSpent: report.fundPool?.poolExpenseTotal ?? '',
       fundPoolReimbursed: report.fundPool?.reimbursementTotal ?? '',
+      companyClaimsExpected: report.companyClaims?.totalExpected ?? '',
+      companyClaimsApproved: report.companyClaims?.totalApproved ?? '',
+      companyClaimsReceived: report.companyClaims?.totalReceived ?? '',
+      companyClaimsAddedToPool: report.companyClaims?.poolReceivedTotal ?? '',
+      companyClaimsDirectToParticipants: report.companyClaims?.directParticipantTotal ?? '',
+      companyClaimsExpenseLockActive: report.companyClaims?.expenseLockActive ?? '',
       finalClosureAction: closure.finalAction ?? '',
       finalClosureAmount: closure.finalAmount ?? '',
       finalClosureRoundedAmount: closure.finalAmountRounded ?? '',

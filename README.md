@@ -568,3 +568,10 @@ Final pool closure now calculates a net round-off balancing line. Participant cl
 ### Dashboard UX Redesign Hotfix
 
 The Dashboard first screen was redesigned around an executive summary layout. It now shows a smart Event health banner, four icon-based KPI cards, a Financial flow section, Budget/Collection/Pool progress bars, a Next action recommendation, and a compact Quick status panel. The duplicated Budget Collection and Team Fund Pool card blocks were merged into a clearer money-flow view while keeping Category spending and Participant balances below the fold. This is a frontend-only update and does not require new backend routes or environment variables.
+
+## Phase 21A - Claims and Expense Lock Workflow
+
+Phase 21A adds a new **Claims** tab for post-trip company reimbursement tracking. Company claims can be fixed reimbursements to the pool, payments to the financier, category/percentage based claims, or direct payments to participants. Expenses remain editable while claims are in draft/reopened/rejected status, and are locked once a claim is submitted, approved, partially received, or received. Admin users can reopen a claim by typing `REOPEN CLAIM` when corrections are required.
+
+Received pool-based claims increase the Team Fund Pool and flow into Final Pool Closure. Direct participant reimbursements do not enter the pool; they reduce the participant's final closure result to avoid double reimbursement. PDF and CSV reports now include company claim totals and reimbursement impact.
+
