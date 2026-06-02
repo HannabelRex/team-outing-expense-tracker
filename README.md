@@ -530,3 +530,7 @@ Budget collection suggestions are now rounded up to the nearest 100. For example
 ### Budget Collection Expected Rounding Hotfix
 
 Non-custom budget collection expected amounts now follow the rounded suggested collection amount. For example, if the raw split is `INR 5,769.23`, the suggested and expected participant collection becomes `INR 5,800`, and expected collection totals are calculated from that rounded amount. Custom expected amounts are preserved unless reset by Admin/Finance.
+
+## Phase 20 - Final Pool Closure and Refund Settlement
+
+Phase 20 adds final outing closure support for collection-first outings. After the outing is done, Admin/Finance users can calculate the remaining team fund pool, adjust it with pending settlements and pending collections, and mark final refunds or final collections as completed. The Settlements tab now includes a Final pool closure section, and PDF/CSV reports include closure details.
