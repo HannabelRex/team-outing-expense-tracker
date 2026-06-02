@@ -269,6 +269,20 @@ const themedTooltipProps = (chartTheme) => ({
   itemStyle: { color: '#0f172a' }
 });
 
+const PERSONAL_CATEGORY_ID = 'personal-off-budget';
+const PERSONAL_CATEGORY_NAME = 'Personal (off-budget split)';
+
+function isPersonalCategoryId(categoryId) {
+  return categoryId === PERSONAL_CATEGORY_ID;
+}
+
+function expenseCategoryOptions(data) {
+  return [
+    ...(Array.isArray(data.categories) ? data.categories : []),
+    { id: PERSONAL_CATEGORY_ID, name: PERSONAL_CATEGORY_NAME, isPersonal: true }
+  ];
+}
+
 let apiAccessToken = '';
 function setApiAccessToken(token) {
   apiAccessToken = token || '';
@@ -309,7 +323,7 @@ function buildDefaultExpenseForm(data, expense = null) {
     return {
       title: expense.title || '',
       amount: String(expense.amount ?? ''),
-      categoryId: expense.categoryId || data.categories[0]?.id || '',
+      categoryId: expense.isPersonalExpense ? PERSONAL_CATEGORY_ID : (expense.categoryId || data.categories[0]?.id || ''),
       date: expense.date || new Date().toISOString().slice(0, 10),
       paidByParticipantId: expense.paidByParticipantId || expense.handledByParticipantId || data.participants[0]?.id || '',
       paymentSource: expense.paymentSource || 'participant',
@@ -346,14 +360,16 @@ function parseSplitText(text, key) {
 }
 
 function buildExpensePayload(form) {
-  const isPoolExpense = form.paymentSource === 'pool';
+  const isPersonalExpense = isPersonalCategoryId(form.categoryId);
+  const isPoolExpense = !isPersonalExpense && form.paymentSource === 'pool';
   const payload = {
     ...form,
     amount: Number(form.amount),
     receipt: form.receipt || null,
     customSplits: isPoolExpense ? [] : parseSplitText(form.customSplitsText, 'amount'),
     percentageSplits: isPoolExpense ? [] : parseSplitText(form.percentageSplitsText, 'percentage'),
-    paymentSource: form.paymentSource || 'participant',
+    paymentSource: isPersonalExpense ? 'participant' : (form.paymentSource || 'participant'),
+    isPersonalExpense,
     handledByParticipantId: isPoolExpense ? form.paidByParticipantId : '',
     participantIds: isPoolExpense ? [] : form.participantIds,
     splitMethod: isPoolExpense ? 'pool' : (form.splitMethod || 'equal')
@@ -566,7 +582,7 @@ function eventOfflineExpenseDrafts(data) {
 function validateOfflineExpenseDraft(data, payload) {
   if (!payload.title?.trim()) throw new Error('Expense title is required before saving an offline draft. Apparently even chaos needs a label.');
   if (!Number.isFinite(Number(payload.amount)) || Number(payload.amount) <= 0) throw new Error('Expense amount must be greater than zero. Free expenses are called happiness, not accounting.');
-  if (!payload.categoryId || !data.categories.some((category) => category.id === payload.categoryId)) throw new Error('Pick a valid category before saving this offline draft.');
+  if (!payload.categoryId || (!isPersonalCategoryId(payload.categoryId) && !data.categories.some((category) => category.id === payload.categoryId))) throw new Error('Pick a valid category before saving this offline draft.');
   if (!payload.paidByParticipantId || !data.participants.some((participant) => participant.id === payload.paidByParticipantId)) throw new Error(payload.paymentSource === 'pool' ? 'Pick a valid handler for this pool expense.' : 'Pick a valid paid-by participant before saving this offline draft.');
   if (payload.paymentSource === 'pool' && data.currentUser?.role === 'member') throw new Error('Members cannot save team fund pool expenses. Ask Admin or Finance to record spending from the collected pool.');
   if (payload.paymentSource === 'pool' && !data.event?.financierParticipantId) throw new Error('Set the common pool handler/financier in Event setup before saving a team fund pool expense.');
@@ -2491,6 +2507,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
   const [offlineDrafts, setOfflineDrafts] = useState(() => eventOfflineExpenseDrafts(data));
   const [syncingDrafts, setSyncingDrafts] = useState(false);
   const currency = data.event.currency;
+  const categoriesForExpense = useMemo(() => expenseCategoryOptions(data), [data.categories]);
+  const isPersonalExpenseForm = isPersonalCategoryId(form.categoryId);
   const financierParticipant = data.participants.find((participant) => participant.id === data.event?.financierParticipantId);
   const financierName = financierParticipant?.name || '';
   const editingExpense = useMemo(() => data.expenses.find((expense) => expense.id === editingExpenseId) || null, [data.expenses, editingExpenseId]);
@@ -2510,10 +2528,11 @@ function Expenses({ data, reload, setToast, isOnline }) {
 
   const expenseRows = useMemo(() => {
     const categoryMap = new Map(data.categories.map((category) => [category.id, category.name]));
+    categoryMap.set(PERSONAL_CATEGORY_ID, PERSONAL_CATEGORY_NAME);
     const participantMap = new Map(data.participants.map((participant) => [participant.id, participant.name]));
     return data.expenses.map((expense) => ({
       ...expense,
-      categoryName: categoryMap.get(expense.categoryId) || 'Uncategorized',
+      categoryName: expense.isPersonalExpense || isPersonalCategoryId(expense.categoryId) ? PERSONAL_CATEGORY_NAME : (categoryMap.get(expense.categoryId) || 'Uncategorized'),
       paidByName: expense.paymentSource === 'pool' ? 'Team Fund Pool' : (participantMap.get(expense.paidByParticipantId) || 'Unknown'),
       handledByName: participantMap.get(expense.handledByParticipantId || expense.paidByParticipantId) || 'Unknown'
     }));
@@ -2617,7 +2636,28 @@ function Expenses({ data, reload, setToast, isOnline }) {
     setForm({ ...form, participantIds: next });
   }
 
+  function handleCategoryChange(categoryId) {
+    if (isPersonalCategoryId(categoryId)) {
+      setForm({
+        ...form,
+        categoryId,
+        paymentSource: 'participant',
+        paidByParticipantId: form.paidByParticipantId || data.participants[0]?.id || '',
+        participantIds: form.participantIds?.length ? form.participantIds : data.participants.filter((participant) => participant.attendanceStatus !== 'not-attending').map((participant) => participant.id),
+        splitMethod: form.splitMethod === 'pool' ? 'equal' : (form.splitMethod || 'equal'),
+        customSplitsText: form.splitMethod === 'pool' ? '' : form.customSplitsText,
+        percentageSplitsText: form.splitMethod === 'pool' ? '' : form.percentageSplitsText
+      });
+      return;
+    }
+    setForm({ ...form, categoryId });
+  }
+
   function handlePaymentSourceChange(paymentSource) {
+    if (isPersonalExpenseForm && paymentSource === 'pool') {
+      setToast('Personal off-budget expenses must be paid by a participant so the selected participant split can work.');
+      return;
+    }
     if (paymentSource === 'pool') {
       setForm({
         ...form,
@@ -2842,8 +2882,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
           <label className="field-label">Title<input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
           <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
           <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
-          <label className="field-label">Category<select className="input" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} required>{data.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-          <label className="field-label">Payment source<select className="input" value={form.paymentSource} onChange={(e) => handlePaymentSourceChange(e.target.value)}><option value="participant">Paid by participant personally</option>{data.currentUser?.role !== 'member' && <option value="pool">Paid from team fund pool</option>}</select></label>
+          <label className="field-label">Category<select className="input" value={form.categoryId} onChange={(e) => handleCategoryChange(e.target.value)} required>{categoriesForExpense.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+          <label className="field-label">Payment source<select className="input" value={isPersonalExpenseForm ? 'participant' : form.paymentSource} onChange={(e) => handlePaymentSourceChange(e.target.value)} disabled={isPersonalExpenseForm}><option value="participant">Paid by participant personally</option>{!isPersonalExpenseForm && data.currentUser?.role !== 'member' && <option value="pool">Paid from team fund pool</option>}</select>{isPersonalExpenseForm && <span className="mt-1 text-xs font-semibold text-indigo-700">Personal expenses are off-budget but still split between selected participants.</span>}</label>
           {form.paymentSource === 'pool' ? (
             <div className="field-label">Handled by financier
               <div className="input flex items-center bg-slate-50 text-slate-900">{financierName || 'Set financier in Event setup'}</div>
@@ -2863,6 +2903,11 @@ function Expenses({ data, reload, setToast, isOnline }) {
                 </div>
               </div>
               {poolExpenseExceedsBalance && <p className="mt-3 rounded-2xl bg-white p-3 text-rose-700 ring-1 ring-rose-100">This expense is above the shared pool threshold. Reduce the amount or collect more money before saving it.</p>}
+            </div>
+          )}
+          {isPersonalExpenseForm && (
+            <div className="lg:col-span-3 rounded-2xl bg-indigo-50 p-4 text-sm font-semibold text-indigo-900 ring-1 ring-indigo-200">
+              This is a Personal off-budget expense. It will not affect budget totals, category actuals, fund pool balance, or official expense reports. It will still be included in participant splits and settlements for the selected participants.
             </div>
           )}
           {form.paymentSource !== 'pool' && <label className="field-label">Split method<select className="input" value={form.splitMethod} onChange={(e) => setForm({ ...form, splitMethod: e.target.value })}><option value="equal">Equal among selected</option><option value="selected">Selected participants</option><option value="custom">Custom amount</option><option value="percentage">Percentage</option></select></label>}
@@ -2935,7 +2980,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
           <div className="space-y-3">
             {offlineDrafts.map((draft) => {
               const paidBy = data.participants.find((participant) => participant.id === draft.payload?.paidByParticipantId)?.name || 'Unknown participant';
-              const category = data.categories.find((item) => item.id === draft.payload?.categoryId)?.name || 'Unknown category';
+              const category = isPersonalCategoryId(draft.payload?.categoryId) || draft.payload?.isPersonalExpense ? PERSONAL_CATEGORY_NAME : (data.categories.find((item) => item.id === draft.payload?.categoryId)?.name || 'Unknown category');
               return (
                 <div key={draft.id} className="rounded-3xl bg-white p-4 ring-1 ring-slate-200">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2970,7 +3015,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
       <Section title="Expense list" icon={Filter}>
         <div className="mb-4 grid gap-3 lg:grid-cols-7">
           <label className="relative lg:col-span-2"><Search className="absolute left-3 top-3 text-slate-400" size={16} /><input className="input pl-10" placeholder="Search expenses" value={filters.query} onChange={(e) => setFilters({ ...filters, query: e.target.value })} /></label>
-          <select className="input" value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })}><option value="">All categories</option>{data.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
+          <select className="input" value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })}><option value="">All categories</option>{categoriesForExpense.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
           <select className="input" value={filters.paidByParticipantId} onChange={(e) => setFilters({ ...filters, paidByParticipantId: e.target.value })}><option value="">Paid/handled by anyone</option>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select>
           <select className="input" value={filters.approvalStatus} onChange={(e) => setFilters({ ...filters, approvalStatus: e.target.value })}><option value="">Any status</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
           <input className="input" type="date" value={filters.fromDate} onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })} />

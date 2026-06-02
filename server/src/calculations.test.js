@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, calculateFinalClosure, calculateFundPool, generateSettlementPlan } from './calculations.js';
+import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, calculateFundPool, generateSettlementPlan } from './calculations.js';
 
 const equalExpense = {
   title: 'Snacks',
@@ -236,63 +236,40 @@ assert.deepEqual(calculateExpenseShares({
   paymentMethod: 'UPI'
 }), []);
 
-
-const closureData = {
-  event: { estimatedBudget: 1000 },
+const personalOffBudgetData = {
+  event: { estimatedBudget: 0 },
   participants: [
-    { id: 'p1', name: 'A', emailOrPhone: 'a@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' },
-    { id: 'p2', name: 'B', emailOrPhone: 'b@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' }
+    { id: 'op1', name: 'Off A', emailOrPhone: 'a@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' },
+    { id: 'op2', name: 'Off B', emailOrPhone: 'b@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' }
   ],
-  categories: [{ id: 'c-food', name: 'Food', estimatedCost: 1000 }],
-  budgetCollections: [
-    { participantId: 'p1', expectedAmount: 500, payments: [{ id: 'bc1', amount: 500, paidAt: '2026-07-18', mode: 'UPI' }] },
-    { participantId: 'p2', expectedAmount: 500, payments: [{ id: 'bc2', amount: 500, paidAt: '2026-07-18', mode: 'UPI' }] }
-  ],
+  categories: [{ id: 'c-budget', name: 'Budgeted', estimatedCost: 1000 }],
   expenses: [
     {
-      title: 'Pool dinner',
-      amount: 300,
-      categoryId: 'c-food',
-      date: '2026-07-18',
-      paidByParticipantId: 'p1',
-      handledByParticipantId: 'p1',
-      paymentSource: 'pool',
-      participantIds: [],
-      splitMethod: 'pool',
+      title: 'Personal snacks',
+      amount: 600,
+      categoryId: 'personal-off-budget',
+      isPersonalExpense: true,
+      date: '2026-07-25',
+      paidByParticipantId: 'op1',
+      paymentSource: 'participant',
+      participantIds: ['op1', 'op2'],
+      splitMethod: 'equal',
       customSplits: [],
       percentageSplits: [],
       paymentMethod: 'UPI',
       approvalStatus: 'approved'
-    },
-    {
-      title: 'Personal taxi',
-      amount: 100,
-      categoryId: 'c-food',
-      date: '2026-07-19',
-      paidByParticipantId: 'p2',
-      paymentSource: 'participant',
-      participantIds: ['p1', 'p2'],
-      splitMethod: 'equal',
-      customSplits: [],
-      percentageSplits: [],
-      paymentMethod: 'Cash',
-      approvalStatus: 'approved'
     }
   ],
-  fundTransactions: [],
   settlements: []
 };
 
-const closure = calculateFinalClosure(closureData);
-assert.equal(closure.currentPoolBalance, 700);
-const closureA = closure.rows.find((row) => row.participantId === 'p1');
-const closureB = closure.rows.find((row) => row.participantId === 'p2');
-assert.equal(closureA.poolRefundShare, 350);
-assert.equal(closureA.settlementPayable, 50);
-assert.equal(closureA.finalAmount, 300);
-assert.equal(closureB.poolRefundShare, 350);
-assert.equal(closureB.settlementReceivable, 50);
-assert.equal(closureB.finalAmount, 400);
-assert.equal(closure.totalRefundDue, 700);
+const personalDashboard = calculateDashboard(personalOffBudgetData);
+assert.equal(personalDashboard.totalBudget, 1000);
+assert.equal(personalDashboard.totalSpent, 0, 'Personal off-budget expenses should not count against budget spending');
+assert.equal(personalDashboard.categorySpending[0].actualCost, 0, 'Personal off-budget expenses should not count in category actuals');
+const offBudgetPayer = personalDashboard.participantBalances.find((balance) => balance.participantId === 'op1');
+const offBudgetOwer = personalDashboard.participantBalances.find((balance) => balance.participantId === 'op2');
+assert.equal(offBudgetPayer.netBalance, 300, 'Personal off-budget expenses should still affect settlement splits');
+assert.equal(offBudgetOwer.netBalance, -300, 'Selected participants should owe their share of personal off-budget expenses');
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');

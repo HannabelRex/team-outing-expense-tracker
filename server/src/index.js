@@ -6,6 +6,8 @@ import PDFDocument from 'pdfkit';
 import nodemailer from 'nodemailer';
 import { readStore, writeStore, sanitizeObject } from './storage.js';
 import {
+  PERSONAL_CATEGORY_ID,
+  PERSONAL_CATEGORY_NAME,
   buildExpenseReport,
   calculateDashboard,
   calculateBudgetCollections,
@@ -15,7 +17,8 @@ import {
   generateSettlementPlan,
   toCsv,
   validateExpensePayload,
-  roundMoney
+  roundMoney,
+  isPersonalExpense
 } from './calculations.js';
 
 const app = express();
@@ -1365,6 +1368,7 @@ function participantLabel(eventRecord, participantId) {
 }
 
 function categoryLabel(eventRecord, categoryId) {
+  if (categoryId === PERSONAL_CATEGORY_ID) return PERSONAL_CATEGORY_NAME;
   return findById(eventRecord.categories || [], categoryId)?.name || categoryId || 'Unknown category';
 }
 
@@ -2634,7 +2638,8 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
   assertActiveEventEditable(activeEvent);
-  const paymentSource = req.body.paymentSource === 'pool' ? 'pool' : 'participant';
+  const isPersonalCategoryExpense = req.body.categoryId === PERSONAL_CATEGORY_ID || req.body.isPersonalExpense === true;
+  const paymentSource = isPersonalCategoryExpense ? 'participant' : (req.body.paymentSource === 'pool' ? 'pool' : 'participant');
   if (paymentSource === 'pool' && !activeEvent.event.financierParticipantId) {
     return res.status(400).json({ error: 'Set the common pool handler/financier in Event setup before recording expenses from the team fund pool.' });
   }
@@ -2643,7 +2648,7 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
     id: `e-${nanoid(8)}`,
     title: req.body.title,
     amount: roundMoney(Number(req.body.amount)),
-    categoryId: req.body.categoryId,
+    categoryId: isPersonalCategoryExpense ? PERSONAL_CATEGORY_ID : req.body.categoryId,
     date: req.body.date,
     paidByParticipantId: paymentSource === 'pool' ? financierParticipantId : req.body.paidByParticipantId,
     participantIds: paymentSource === 'pool' ? [] : (req.body.participantIds || []),
@@ -2652,6 +2657,7 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
     percentageSplits: paymentSource === 'pool' ? [] : (req.body.percentageSplits || []),
     paymentMethod: req.body.paymentMethod,
     paymentSource,
+    isPersonalExpense: isPersonalCategoryExpense,
     handledByParticipantId: paymentSource === 'pool' ? financierParticipantId : '',
     notes: req.body.notes || '',
     receipt: req.body.receipt || null,
@@ -2673,6 +2679,7 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
     paidBy: expense.paymentSource === 'pool' ? 'Team Fund Pool' : participantLabel(activeEvent, expense.paidByParticipantId),
     handledBy: participantLabel(activeEvent, expense.handledByParticipantId || expense.paidByParticipantId),
     paymentSource: expense.paymentSource || 'participant',
+    offBudgetPersonal: Boolean(expense.isPersonalExpense),
     receiptFileName: expense.receipt?.fileName || ''
   });
   syncSettlements(activeEvent);
@@ -2705,11 +2712,19 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
       ? { ...expense.receipt }
       : expense.receipt
   };
+  const nextIsPersonalExpense = req.body.categoryId === PERSONAL_CATEGORY_ID || req.body.isPersonalExpense === true;
   const nextExpense = {
     ...expense,
     ...req.body,
+    categoryId: nextIsPersonalExpense ? PERSONAL_CATEGORY_ID : (req.body.categoryId ?? expense.categoryId),
+    isPersonalExpense: nextIsPersonalExpense,
+    paymentSource: nextIsPersonalExpense ? 'participant' : (req.body.paymentSource ?? expense.paymentSource ?? 'participant'),
     amount: roundMoney(Number(req.body.amount ?? expense.amount))
   };
+  if (nextExpense.isPersonalExpense && nextExpense.paymentSource === 'pool') {
+    return res.status(400).json({ error: 'Personal off-budget expenses must be paid by a participant and split between selected participants.' });
+  }
+
   if (nextExpense.paymentSource === 'pool') {
     if (!activeEvent.event.financierParticipantId) {
       return res.status(400).json({ error: 'Set the common pool handler/financier in Event setup before recording expenses from the team fund pool.' });
@@ -2740,6 +2755,7 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
     beforePaidBy: participantLabel(activeEvent, beforeExpense.paidByParticipantId),
     afterPaidBy: expense.paymentSource === 'pool' ? 'Team Fund Pool' : participantLabel(activeEvent, expense.paidByParticipantId),
     paymentSource: expense.paymentSource || 'participant',
+    offBudgetPersonal: Boolean(expense.isPersonalExpense),
     handledBy: participantLabel(activeEvent, expense.handledByParticipantId || expense.paidByParticipantId),
     beforeReceiptFileName: beforeExpense.receipt?.fileName || '',
     afterReceiptFileName: expense.receipt?.fileName || ''
@@ -3440,6 +3456,7 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
   drawPdfSection(doc, 'Expense list');
   const participantMap = new Map(activeEvent.participants.map((participant) => [participant.id, participant.name]));
   const categoryMap = new Map(activeEvent.categories.map((category) => [category.id, category.name]));
+  categoryMap.set(PERSONAL_CATEGORY_ID, PERSONAL_CATEGORY_NAME);
   drawSimpleTable(doc, [
     { label: 'Date', key: 'date', weight: 1 },
     { label: 'Expense', key: 'title', weight: 2 },
@@ -3447,7 +3464,7 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     { label: 'Source', value: (row) => row.paymentSource === 'pool' ? 'Team fund pool' : (participantMap.get(row.paidByParticipantId) || 'Unknown'), weight: 1.3 },
     { label: 'Amount', value: (row) => serverMoney(row.amount, currency), weight: 1 },
     { label: 'Approval', value: (row) => pdfStatusLabel(row.approvalStatus), weight: 1 }
-  ], activeEvent.expenses, { emptyText: 'No expenses recorded.', fontSize: 7.5 });
+  ], activeEvent.expenses.filter((expense) => !isPersonalExpense(expense)), { emptyText: 'No official expenses recorded.', fontSize: 7.5 });
 
   drawPdfSection(doc, 'Receipt references');
   drawSimpleTable(doc, [

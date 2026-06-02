@@ -537,3 +537,7 @@ Non-custom budget collection expected amounts now follow the rounded suggested c
 - The app blocks pool-paid expenses when the entered amount exceeds the available pool balance.
 - Backend validation also prevents direct API overspending of the shared pool.
 - Editing an existing pool expense credits the old amount back to the editable threshold so legitimate edits are allowed.
+
+### Personal off-budget split expenses
+
+A built-in **Personal (off-budget split)** category is available in the Expenses tab. Expenses in this category are excluded from budget totals, category actuals, fund pool calculations, and official expense report lists, but they still participate in selected-participant split and settlement calculations.
