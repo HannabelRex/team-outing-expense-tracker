@@ -583,3 +583,7 @@ The Expenses tab list now shows each expense note/description below the expense 
 ## Phase 22 - Itinerary Planner
 
 Phase 22 adds an Itinerary tab and Dashboard itinerary preview. Admin and Finance users can maintain the trip schedule with date/time, location, category link, notes, and status. Completed activities are struck through, members can view the schedule read-only, and PDF/CSV reports now include itinerary details. No new environment variables are required.
+
+## Phase 23 - Responsive Full-Screen and Mobile UX Upgrade
+
+Phase 23 optimizes the app for wide desktop screens and mobile use. The app shell now uses a wider responsive layout, the desktop tab row wraps instead of wasting horizontal space, and mobile users get a bottom navigation bar with a More panel for secondary modules. The Expenses list now uses mobile-friendly cards on small screens while retaining the full table on desktop. This is a frontend-only update and does not require new backend routes or environment variables.

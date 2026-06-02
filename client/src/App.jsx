@@ -8,7 +8,9 @@ import {
   ExternalLink,
   FileText,
   Filter,
+  Home,
   MapPin,
+  MoreHorizontal,
   Palette,
   LogOut,
   LockKeyhole,
@@ -1004,7 +1006,7 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
       <div className="auth-aurora auth-aurora-three" />
       <div className="auth-grid-overlay" />
 
-      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-7xl items-center gap-8 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-[1760px] items-center gap-8 lg:grid-cols-[0.9fr_1.1fr]">
         <section className="auth-form-wrap order-1 mx-auto w-full max-w-md lg:mx-0">
           <div className="auth-form-card rounded-[2rem] border border-white/60 bg-white/78 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
             <div className="mb-6 flex items-start gap-4">
@@ -1544,7 +1546,7 @@ function Dashboard({ data, activeTheme }) {
         </div>
       </Section>
 
-      <div className="grid gap-5 xl:grid-cols-[1.05fr_0.75fr_0.9fr]">
+      <div className="grid gap-5 2xl:grid-cols-[1.15fr_0.8fr_0.95fr] xl:grid-cols-[1.05fr_0.75fr_0.9fr]">
         <Section title="Next action" icon={nextAction.icon}>
           <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-white p-5 ring-1 ring-slate-100">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Recommended</p>
@@ -1577,7 +1579,7 @@ function Dashboard({ data, activeTheme }) {
         </div>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-5 2xl:grid-cols-[1.05fr_0.95fr] xl:grid-cols-2">
         <Section title="Category spending" icon={WalletCards}>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
@@ -1792,7 +1794,7 @@ function AnalyticsDashboard({ data, activeTheme }) {
         </div>
       </Section>
 
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-5 2xl:grid-cols-[1.05fr_0.95fr] xl:grid-cols-2">
         <Section title="Budget vs actual by category" icon={WalletCards}>
           <div className="h-80">
             {categoryChartData.length === 0 ? <EmptyState title="No category data" body="Add budget categories and expenses to see category analytics." /> : (
@@ -1828,7 +1830,7 @@ function AnalyticsDashboard({ data, activeTheme }) {
         </Section>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-5 2xl:grid-cols-[1.05fr_0.95fr] xl:grid-cols-2">
         <Section title="Participant contribution" icon={Users}>
           <div className="h-80">
             {participantContributionData.length === 0 ? <EmptyState title="No participant contribution" body="Add participants and expenses to see who paid what." /> : (
@@ -3284,7 +3286,46 @@ function Expenses({ data, reload, setToast, isOnline }) {
         {filteredExpenses.length === 0 ? (
           <EmptyState title="No expenses found" body="Try clearing filters or adding the first expense." />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <div className="space-y-3 md:hidden">
+              {filteredExpenses.map((expense) => (
+                <article key={`mobile-${expense.id}`} className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-base font-black text-slate-950">{expense.title}</p>
+                      <p className="mt-1 text-xs font-semibold text-slate-500">{expense.date} · {expense.categoryName} · {expense.paymentMethod}</p>
+                    </div>
+                    <span className={statusBadge(expense.approvalStatus)}>{expense.approvalStatus}</span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                      <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">Amount</p>
+                      <p className="mt-1 font-black text-slate-950">{money(expense.amount, currency)}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-100">
+                      <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">Source</p>
+                      <p className="mt-1 font-black text-slate-950">{expense.paymentSource === 'pool' ? 'Team pool' : 'Personal'}</p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs font-semibold text-slate-500">
+                    {expense.paymentSource === 'pool' ? `Handled by ${expense.handledByName}` : `Paid by ${expense.paidByName || '-'}`}
+                  </p>
+                  {expense.notes && (
+                    <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600 ring-1 ring-slate-100">
+                      <span className="font-black text-slate-700">Description:</span> {expense.notes}
+                    </p>
+                  )}
+                  {expense.receipt && <p className="mt-2 text-xs text-slate-500">Receipt: <a className="font-semibold text-slate-800 underline" href={expense.receipt.url} target="_blank" rel="noreferrer">{expense.receipt.fileName}</a></p>}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button className="btn-icon" type="button" onClick={() => startEditExpense(expense)} disabled={expensesLockedByClaim} title="Edit expense" aria-label={`Edit ${expense.title}`}><Pencil size={14} /></button>
+                    <button className="btn-icon text-emerald-700" type="button" onClick={() => approveExpense(expense, 'approved')} disabled={busy || expensesLockedByClaim} title="Approve expense" aria-label={`Approve ${expense.title}`}><CheckCircle2 size={14} /></button>
+                    <button className="btn-icon text-amber-700" type="button" onClick={() => approveExpense(expense, 'rejected')} disabled={busy || expensesLockedByClaim} title="Reject expense" aria-label={`Reject ${expense.title}`}><X size={14} /></button>
+                    <button className="btn-icon text-rose-700" type="button" onClick={() => deleteExpense(expense.id)} disabled={busy || expensesLockedByClaim} title="Delete expense" aria-label={`Delete ${expense.title}`}><Trash2 size={14} /></button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-slate-500">
@@ -3325,7 +3366,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </Section>
     </div>
@@ -4480,7 +4522,7 @@ function Reports({ data, setToast, activeTheme }) {
 
   return (
     <Section title="Reports and export" icon={FileText} action={reportAction}>
-      <div className="grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-5 2xl:grid-cols-[1.05fr_0.95fr] xl:grid-cols-2">
         <div className="rounded-2xl bg-slate-50 p-4">
           <h3 className="font-bold text-slate-900">Event report summary</h3>
           <dl className="mt-4 space-y-3 text-sm">
@@ -5426,7 +5468,7 @@ function OfflineStatusBanner({ isOnline, lastSyncedAt, offlineNotice }) {
       role="status"
       aria-live="polite"
     >
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm sm:px-6 lg:px-8">
+      <div className="mx-auto flex max-w-[1760px] flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm sm:px-6 lg:px-8">
         <div className="flex items-start gap-3">
           <div className={`mt-0.5 rounded-full p-2 ${isOnline ? 'bg-emerald-100' : 'bg-amber-100'}`}>{icon}</div>
           <div>
@@ -5681,6 +5723,7 @@ function AppShell() {
   const unreadInboxCount = inboxItems.filter((item) => !item.read).length;
   const activeTheme = useMemo(() => getThemeByKey(themeKey), [themeKey]);
   const themeVars = useMemo(() => buildThemeVars(activeTheme), [activeTheme]);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
 
   function changeTheme(nextThemeKey) {
     const nextTheme = getThemeByKey(nextThemeKey);
@@ -5734,12 +5777,21 @@ function AppShell() {
     return visibleTabs;
   }, [canViewEvents, canViewAnalytics, canViewNotifications, canViewAudit, canViewRoles, canViewDataManagement, hasAssignedEvent]);
 
+  const mobilePrimaryTabKeys = ['dashboard', 'expenses', 'budget'];
+  const mobilePrimaryTabs = tabs.filter(([key]) => mobilePrimaryTabKeys.includes(key));
+  const mobileMoreTabs = tabs.filter(([key]) => !mobilePrimaryTabKeys.includes(key));
+  const isMobileMoreActive = mobileMoreTabs.some(([key]) => key === activeTab);
+
   useEffect(() => {
     const canAccessActiveTab = tabs.some(([key]) => key === activeTab);
     if (!canAccessActiveTab) {
       setActiveTab('dashboard');
     }
   }, [activeTab, tabs]);
+
+  useEffect(() => {
+    setMobileMoreOpen(false);
+  }, [activeTab]);
 
   if (!session?.access_token) {
     return <AuthScreen onSession={handleSession} setToast={setToast} initialMessage={sessionExpiredMessage} />;
@@ -5769,7 +5821,7 @@ function AppShell() {
   return (
     <main className="theme-shell min-h-screen text-slate-900" style={themeVars}>
       <header className="app-header text-white">
-        <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8 2xl:px-10">
           <div className="flex flex-wrap items-start justify-between gap-5">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Team Outing Expense Tracker</p>
@@ -5829,8 +5881,8 @@ function AppShell() {
 
       <OfflineStatusBanner isOnline={isOnline} lastSyncedAt={lastSyncedAt} offlineNotice={offlineNotice} />
 
-      <nav className="app-nav sticky top-0 z-10 border-b backdrop-blur">
-        <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-3 sm:px-6 lg:px-8">
+      <nav className="app-nav sticky top-0 z-10 hidden border-b backdrop-blur md:block">
+        <div className="mx-auto flex max-w-[1760px] flex-wrap gap-2 overflow-visible px-4 py-3 sm:px-6 lg:px-8 2xl:px-10">
           {tabs.map(([key, label]) => (
             <button key={key} className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-bold ${activeTab === key ? 'app-tab-active' : 'app-tab-idle'}`} onClick={() => setActiveTab(key)} type="button">
               {label}
@@ -5838,6 +5890,46 @@ function AppShell() {
           ))}
         </div>
       </nav>
+
+      <nav className="mobile-bottom-nav md:hidden" aria-label="Mobile navigation">
+        <div className="grid grid-cols-4 gap-2">
+          {mobilePrimaryTabs.map(([key, label]) => {
+            const Icon = key === 'dashboard' ? Home : key === 'expenses' ? Receipt : WalletCards;
+            return (
+              <button key={key} className={`mobile-bottom-nav-item ${activeTab === key ? 'mobile-bottom-nav-active' : ''}`} type="button" onClick={() => setActiveTab(key)}>
+                <Icon size={18} />
+                <span>{label}</span>
+              </button>
+            );
+          })}
+          <button className={`mobile-bottom-nav-item ${isMobileMoreActive || mobileMoreOpen ? 'mobile-bottom-nav-active' : ''}`} type="button" onClick={() => setMobileMoreOpen((open) => !open)}>
+            <MoreHorizontal size={18} />
+            <span>More</span>
+          </button>
+        </div>
+      </nav>
+
+      {mobileMoreOpen && (
+        <>
+          <button className="mobile-more-backdrop md:hidden" type="button" aria-label="Close mobile menu" onClick={() => setMobileMoreOpen(false)} />
+          <div className="mobile-more-panel md:hidden">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Modules</p>
+                <h3 className="text-lg font-black text-slate-950">Choose a workspace area</h3>
+              </div>
+              <button className="btn-icon" type="button" onClick={() => setMobileMoreOpen(false)} aria-label="Close mobile menu"><X size={16} /></button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {mobileMoreTabs.map(([key, label]) => (
+                <button key={key} className={`mobile-more-option ${activeTab === key ? 'mobile-more-option-active' : ''}`} type="button" onClick={() => setActiveTab(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <NotificationInbox
         open={inboxOpen}
@@ -5851,9 +5943,9 @@ function AppShell() {
       />
 
       {toast && <div className="fixed right-4 top-4 z-20 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white shadow-soft">{toast}</div>}
-      {error && <div className="mx-auto mt-4 max-w-7xl px-4 sm:px-6 lg:px-8"><div className="rounded-2xl bg-rose-50 p-4 text-rose-800 ring-1 ring-rose-200">{error}</div></div>}
+      {error && <div className="mx-auto mt-4 max-w-[1760px] px-4 sm:px-6 lg:px-8 2xl:px-10"><div className="rounded-2xl bg-rose-50 p-4 text-rose-800 ring-1 ring-rose-200">{error}</div></div>}
 
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1760px] space-y-6 px-4 py-6 pb-28 sm:px-6 lg:px-8 md:pb-6 2xl:px-10">
         {activeTab === 'dashboard' && <Dashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'events' && canViewEvents && <EventsConsole data={data} reload={reload} setToast={setToast} onSwitchEvent={switchEvent} />}
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
@@ -5871,7 +5963,7 @@ function AppShell() {
         {activeTab === 'data' && canViewDataManagement && <DataManagement data={data} reload={reload} setToast={setToast} />}
       </div>
 
-      <footer className="mx-auto max-w-7xl px-4 pb-8 text-xs text-slate-500 sm:px-6 lg:px-8">
+      <footer className="mx-auto max-w-[1760px] px-4 pb-28 text-xs text-slate-500 sm:px-6 lg:px-8 md:pb-8 2xl:px-10">
         Mobile PWA mode · {isOnline ? 'Online sync ready' : 'Offline cached view'} · Last synced: {formatSyncTime(lastSyncedAt)} · PostgreSQL/Supabase-ready backend · Currency: {currency} · Designed, engineered, and deployed by Satheeshkumar Balaji.
       </footer>
     </main>
