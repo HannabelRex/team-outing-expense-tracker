@@ -370,6 +370,20 @@ export function calculateFinalClosure(data) {
   const totalRoundingAdjustment = roundMoney(totalNetFinalRounded - totalNetFinal);
   const totalRefundRoundingAdjustment = roundMoney(totalRefundDueRounded - totalRefundDue);
   const totalCollectRoundingAdjustment = roundMoney(totalCollectDueRounded - totalCollectDue);
+  const roundedCashNetOutflow = roundMoney(totalRefundDueRounded - totalCollectDueRounded);
+  const roundOffTargetPoolBalance = roundMoney(currentPoolBalance);
+  const netRoundOffImpact = roundMoney(roundedCashNetOutflow - roundOffTargetPoolBalance);
+  const roundOffBalancerAction = netRoundOffImpact > EPSILON
+    ? 'collect-roundoff'
+    : netRoundOffImpact < -EPSILON
+      ? 'refund-roundoff'
+      : 'balanced';
+  const roundOffBalancerAmount = roundMoney(Math.abs(netRoundOffImpact));
+  const roundOffBalancerAmountRounded = Math.abs(roundWholeMoney(netRoundOffImpact));
+  const totalRefundWithRoundOffBalancer = roundMoney(totalRefundDueRounded + (roundOffBalancerAction === 'refund-roundoff' ? roundOffBalancerAmountRounded : 0));
+  const totalCollectWithRoundOffBalancer = roundMoney(totalCollectDueRounded + (roundOffBalancerAction === 'collect-roundoff' ? roundOffBalancerAmountRounded : 0));
+  const postBalancerCashNetOutflow = roundMoney(totalRefundWithRoundOffBalancer - totalCollectWithRoundOffBalancer);
+  const postBalancerDifference = roundMoney(postBalancerCashNetOutflow - roundOffTargetPoolBalance);
   const completedCount = rows.filter((row) => row.finalAction === 'settled' || row.completionStatus === 'refund-paid' || row.completionStatus === 'amount-collected' || row.completionStatus === 'waived').length;
   const pendingCount = rows.length - completedCount;
 
@@ -394,6 +408,16 @@ export function calculateFinalClosure(data) {
     totalNetFinal,
     totalNetFinalRounded,
     totalRoundingAdjustment,
+    roundedCashNetOutflow,
+    roundOffTargetPoolBalance,
+    netRoundOffImpact,
+    roundOffBalancerAction,
+    roundOffBalancerAmount,
+    roundOffBalancerAmountRounded,
+    totalRefundWithRoundOffBalancer,
+    totalCollectWithRoundOffBalancer,
+    postBalancerCashNetOutflow,
+    postBalancerDifference,
     completedCount,
     pendingCount,
     allClosed: pendingCount === 0 && rows.length > 0,

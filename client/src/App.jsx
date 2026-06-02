@@ -3243,6 +3243,19 @@ function FinalOutingClosure({ data, reload, setToast }) {
     completedCount: 0
   };
   const canManageClosure = ['admin', 'finance'].includes(data.currentUser?.role);
+  const roundOffAction = closure.roundOffBalancerAction || 'balanced';
+  const roundOffAmount = Number(closure.roundOffBalancerAmountRounded ?? closure.roundOffBalancerAmount ?? 0);
+  const hasRoundOffBalancer = roundOffAction !== 'balanced' && roundOffAmount > 0;
+  const roundOffTitle = roundOffAction === 'collect-roundoff'
+    ? 'Collect round-off balance'
+    : roundOffAction === 'refund-roundoff'
+      ? 'Refund round-off balance'
+      : 'Round-off balanced';
+  const roundOffMessage = roundOffAction === 'collect-roundoff'
+    ? `Collect ${wholeMoney(roundOffAmount, currency)} as a separate round-off balancing amount so the financier does not pay the difference from their own pocket.`
+    : roundOffAction === 'refund-roundoff'
+      ? `Refund ${wholeMoney(roundOffAmount, currency)} as a separate round-off balancing amount so the financier does not keep excess cash.`
+      : 'Rounded cash payout/collection already matches the available pool balance.';
   const [busy, setBusy] = useState(false);
   const [forms, setForms] = useState({});
 
@@ -3323,16 +3336,27 @@ function FinalOutingClosure({ data, reload, setToast }) {
         Use this after the outing is done. The app distributes the remaining team fund pool back to participants, adjusts pending settlements, subtracts pending collection, and shows the final amount to refund or collect.
       </div>
 
-      <div className="mb-5 grid gap-3 md:grid-cols-4">
+      <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Remaining pool" value={wholeMoney(closure.currentPoolBalance || 0, currency)} helper={`Exact ${money(closure.currentPoolBalance || 0, currency)} · after collections, pool expenses, refunds, and reimbursements`} danger={Number(closure.currentPoolBalance || 0) < 0} />
-        <StatCard label="Refund due" value={wholeMoney(closure.totalRefundDueRounded ?? closure.totalRefundDue ?? 0, currency)} helper={`Exact ${money(closure.totalRefundDue || 0, currency)} · round-off ${money(closure.totalRefundRoundingAdjustment || 0, currency)}`} />
-        <StatCard label="Still to collect" value={wholeMoney(closure.totalCollectDueRounded ?? closure.totalCollectDue ?? 0, currency)} helper={`Exact ${money(closure.totalCollectDue || 0, currency)} · round-off ${money(closure.totalCollectRoundingAdjustment || 0, currency)}`} danger={Number(closure.totalCollectDue || 0) > 0} />
+        <StatCard label="Refund due" value={wholeMoney(closure.totalRefundDueRounded ?? closure.totalRefundDue ?? 0, currency)} helper={`Participant refunds only · exact ${money(closure.totalRefundDue || 0, currency)} · round-off ${money(closure.totalRefundRoundingAdjustment || 0, currency)}`} />
+        <StatCard label="Still to collect" value={wholeMoney(closure.totalCollectDueRounded ?? closure.totalCollectDue ?? 0, currency)} helper={`Participant collections only · exact ${money(closure.totalCollectDue || 0, currency)} · round-off ${money(closure.totalCollectRoundingAdjustment || 0, currency)}`} danger={Number(closure.totalCollectDue || 0) > 0} />
+        <StatCard label="Round-off balancer" value={hasRoundOffBalancer ? wholeMoney(roundOffAmount, currency) : 'Balanced'} helper={hasRoundOffBalancer ? `${roundOffTitle} · exact impact ${money(closure.netRoundOffImpact || 0, currency)}` : 'No separate round-off action needed'} danger={roundOffAction === 'collect-roundoff'} />
         <StatCard label="Closure progress" value={`${closure.completedCount || 0}/${closure.rows?.length || 0}`} helper={`${closure.pendingCount || 0} pending`} />
       </div>
 
       <div className="mb-5 rounded-2xl border border-sky-100 bg-sky-50/80 p-4 text-sm text-slate-700">
-        Closure payouts are rounded to whole rupees for actual cash/UPI payment. Exact non-rounded values and round-off adjustments are shown under each amount so the financier can tally the difference instead of silently paying it from their own pocket.
+        Closure payouts are rounded to whole rupees for actual cash/UPI payment. Exact non-rounded values and round-off adjustments are shown under each amount. The round-off balancer is shown separately so the financier can collect or refund the net difference instead of silently paying it from their own pocket.
       </div>
+
+      {hasRoundOffBalancer && (
+        <div className={roundOffAction === 'collect-roundoff' ? 'mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900' : 'mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900'}>
+          <div className="font-black">{roundOffTitle}</div>
+          <p className="mt-1">{roundOffMessage}</p>
+          <div className="mt-2 text-xs">
+            Rounded cash net: {wholeMoney(closure.roundedCashNetOutflow || 0, currency)} · Available pool: {money(closure.roundOffTargetPoolBalance || 0, currency)} · Post-balancer difference: {money(closure.postBalancerDifference || 0, currency)}
+          </div>
+        </div>
+      )}
 
       {canManageClosure && (
         <div className="mb-5 flex flex-wrap gap-2">

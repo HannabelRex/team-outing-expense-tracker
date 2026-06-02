@@ -3618,6 +3618,20 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
   ], report.settlementSummary, { emptyText: 'No settlement payments needed.' });
 
   drawPdfSection(doc, 'Final pool closure');
+  if (report.finalClosure) {
+    const closure = report.finalClosure;
+    const balancerAction = closure.roundOffBalancerAction === 'collect-roundoff'
+      ? 'Collect round-off balance'
+      : closure.roundOffBalancerAction === 'refund-roundoff'
+        ? 'Refund round-off balance'
+        : 'Balanced';
+    drawKeyValueGrid(doc, [
+      { label: 'Rounded cash net', value: serverMoney(closure.roundedCashNetOutflow || 0, currency) },
+      { label: 'Available pool', value: serverMoney(closure.roundOffTargetPoolBalance || closure.currentPoolBalance || 0, currency) },
+      { label: 'Round-off balancer', value: closure.roundOffBalancerAction === 'balanced' ? 'Balanced' : `${balancerAction}: ${serverMoney(closure.roundOffBalancerAmountRounded || closure.roundOffBalancerAmount || 0, currency)}` },
+      { label: 'Post-balancer difference', value: serverMoney(closure.postBalancerDifference || 0, currency) }
+    ]);
+  }
   drawSimpleTable(doc, [
     { label: 'Participant', key: 'name', weight: 1.55, bold: true },
     { label: 'Pool paid', value: (row) => serverMoney(row.paidToPool, currency), weight: 1 },
@@ -3730,7 +3744,11 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
       finalClosureExactAmount: closure.absoluteFinalAmount ?? '',
       finalClosureStatus: closure.completionStatus ?? '',
       finalClosurePoolRefund: closure.poolRefundShare ?? '',
-      finalClosureSettlementAdjustment: closure.settlementAdjustment ?? ''
+      finalClosureSettlementAdjustment: closure.settlementAdjustment ?? '',
+      finalClosureRoundOffBalancerAction: report.finalClosure?.roundOffBalancerAction ?? '',
+      finalClosureRoundOffBalancerAmount: report.finalClosure?.roundOffBalancerAmountRounded ?? report.finalClosure?.roundOffBalancerAmount ?? '',
+      finalClosureNetRoundOffImpact: report.finalClosure?.netRoundOffImpact ?? '',
+      finalClosurePostBalancerDifference: report.finalClosure?.postBalancerDifference ?? ''
     };
   });
 

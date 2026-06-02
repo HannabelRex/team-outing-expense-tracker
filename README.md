@@ -559,3 +559,8 @@ Final pool closure now shows whole-rupee rounded amounts for actual refunds/coll
 ### PDF Report Layout Hotfix
 
 The generated PDF report now uses a landscape A4 layout with compact summary cards and safer table pagination. This removes the blank pages that appeared in the Team Fund Pool section and gives wide tables such as Final Pool Closure more room for rounded/exact closure amounts. Event/report text is also sanitized to avoid broken glyphs when unsupported emoji are present in event names.
+
+
+### Final closure round-off balancer hotfix
+
+Final pool closure now calculates a net round-off balancing line. Participant closure values are still shown as whole rupee amounts, but the app also compares the rounded cash net outflow against the exact remaining pool balance. If the rounded plan would make the financier pay extra or keep excess cash, the Settlements tab shows a clear round-off balancer action such as `Collect round-off balance` or `Refund round-off balance`. PDF and CSV reports include the same reconciliation fields.

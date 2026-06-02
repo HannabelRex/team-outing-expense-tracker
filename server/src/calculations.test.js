@@ -300,5 +300,11 @@ assert.equal(finalClosureRounding.rows[0].roundingAdjustment, 0.46);
 assert.equal(finalClosureRounding.totalRefundDue, 223.08);
 assert.equal(finalClosureRounding.totalRefundDueRounded, 224);
 assert.equal(finalClosureRounding.totalRoundingAdjustment, 0.92);
+assert.equal(finalClosureRounding.roundedCashNetOutflow, 224);
+assert.equal(finalClosureRounding.netRoundOffImpact, 0.92);
+assert.equal(finalClosureRounding.roundOffBalancerAction, 'collect-roundoff');
+assert.equal(finalClosureRounding.roundOffBalancerAmountRounded, 1);
+assert.equal(finalClosureRounding.postBalancerCashNetOutflow, 223);
+assert.equal(finalClosureRounding.postBalancerDifference, -0.08);
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');
