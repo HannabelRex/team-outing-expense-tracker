@@ -80,6 +80,67 @@ function collectionStatus(expectedAmount, collectedAmount) {
   return 'collected';
 }
 
+
+
+function normalizeItineraryStatus(status = 'planned') {
+  return ['planned', 'completed', 'cancelled'].includes(status) ? status : 'planned';
+}
+
+function itineraryTimestamp(item = {}) {
+  const date = item.date || '9999-12-31';
+  const time = item.startTime || '23:59';
+  return `${date}T${time}`;
+}
+
+function normalizeItineraryItems(items = []) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => ({
+      id: item.id || '',
+      title: String(item.title || '').trim(),
+      date: item.date || '',
+      startTime: item.startTime || '',
+      endTime: item.endTime || '',
+      location: item.location || '',
+      categoryId: item.categoryId || '',
+      notes: item.notes || '',
+      status: normalizeItineraryStatus(item.status),
+      completedAt: item.completedAt || null,
+      completedBy: item.completedBy || null,
+      cancelledAt: item.cancelledAt || null,
+      cancelledBy: item.cancelledBy || null,
+      createdAt: item.createdAt || null,
+      updatedAt: item.updatedAt || null
+    }))
+    .filter((item) => item.title)
+    .sort((left, right) => itineraryTimestamp(left).localeCompare(itineraryTimestamp(right)));
+}
+
+export function calculateItinerary(data = {}, todayOverride = '') {
+  const items = normalizeItineraryItems(data.itinerary);
+  const today = todayOverride || new Date().toISOString().slice(0, 10);
+  const total = items.length;
+  const completed = items.filter((item) => item.status === 'completed').length;
+  const cancelled = items.filter((item) => item.status === 'cancelled').length;
+  const planned = items.filter((item) => item.status === 'planned').length;
+  const todayItems = items.filter((item) => item.date === today);
+  const upcomingItems = items.filter((item) => item.status === 'planned' && (!item.date || item.date >= today));
+  const nextItem = upcomingItems[0] || items.find((item) => item.status === 'planned') || null;
+  const progressPercent = total > 0 ? roundMoney((completed / total) * 100) : 0;
+
+  return {
+    items,
+    total,
+    completed,
+    cancelled,
+    planned,
+    today,
+    todayItems,
+    nextItem,
+    progressPercent
+  };
+}
+
 export function calculateBudgetCollections(data) {
   const participants = Array.isArray(data.participants) ? data.participants : [];
   const categories = Array.isArray(data.categories) ? data.categories : [];
@@ -837,6 +898,7 @@ export function calculateDashboard(data, options = {}) {
     budgetCollection: calculateBudgetCollections(data),
     fundPool: calculateFundPool(data),
     companyClaims: calculateCompanyClaims(data),
+    itinerarySummary: calculateItinerary(data),
     expenses: approvedOrPendingExpenses.map((expense) => ({
       ...expense,
       categoryName: isPersonalExpense(expense) ? PERSONAL_CATEGORY_NAME : (categoryMap.get(expense.categoryId)?.name || 'Uncategorized'),
@@ -931,6 +993,7 @@ export function buildExpenseReport(data) {
     fundPool: dashboard.fundPool,
     companyClaims: dashboard.companyClaims,
     finalClosure: calculateFinalClosure(data),
+    itinerary: dashboard.itinerarySummary,
     categoryWiseExpenses: dashboard.categorySpending,
     participantWiseContribution: dashboard.participantBalances,
     settlementSummary: settlementPlan.settlements,

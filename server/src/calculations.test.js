@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateBudgetCollections, calculateCompanyClaims, calculateDashboard, calculateExpenseShares, calculateFinalClosure, calculateFundPool, generateSettlementPlan, isExpenseLockedByClaim } from './calculations.js';
+import { calculateBudgetCollections, calculateCompanyClaims, calculateDashboard, calculateExpenseShares, calculateFinalClosure, calculateFundPool, calculateItinerary, generateSettlementPlan, isExpenseLockedByClaim } from './calculations.js';
 
 const equalExpense = {
   title: 'Snacks',
@@ -378,3 +378,17 @@ assert.equal(calculateFundPool(directCompanyClaimData).currentBalance, 700, 'Dir
 assert.equal(calculateFinalClosure(directCompanyClaimData).rows.find((row) => row.participantId === 'cc1').companyDirectReimbursement, 100, 'Direct participant reimbursement should adjust final closure row');
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');
+
+const itinerarySummary = calculateItinerary({
+  itinerary: [
+    { id: 'i2', title: 'Lunch', date: '2026-08-22', startTime: '13:00', status: 'planned' },
+    { id: 'i1', title: 'Breakfast', date: '2026-08-22', startTime: '08:00', status: 'completed' },
+    { id: 'i3', title: 'Cancelled trek', date: '2026-08-23', startTime: '10:00', status: 'cancelled' }
+  ]
+}, '2026-08-22');
+assert.equal(itinerarySummary.total, 3);
+assert.equal(itinerarySummary.completed, 1);
+assert.equal(itinerarySummary.cancelled, 1);
+assert.equal(itinerarySummary.todayItems.length, 2);
+assert.equal(itinerarySummary.todayItems[0].title, 'Breakfast');
+assert.equal(itinerarySummary.nextItem.title, 'Lunch');

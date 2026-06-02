@@ -14,6 +14,7 @@ import {
   calculateFundPool,
   calculateFinalClosure,
   calculateCompanyClaims,
+  calculateItinerary,
   isExpenseLockedByClaim,
   calculatePlannedBudget,
   roundCollectionAmount,
@@ -121,6 +122,7 @@ function buildEventRecord(input = {}) {
     budgetCollections: Array.isArray(input.budgetCollections) ? input.budgetCollections : [],
     fundTransactions: Array.isArray(input.fundTransactions) ? input.fundTransactions : [],
     companyClaims: Array.isArray(input.companyClaims) ? input.companyClaims : [],
+    itinerary: Array.isArray(input.itinerary) ? input.itinerary : [],
     finalClosure: input.finalClosure && typeof input.finalClosure === 'object' ? input.finalClosure : { status: 'not-calculated', records: [] },
     notifications: Array.isArray(input.notifications) ? input.notifications : [],
     auditLog: Array.isArray(input.auditLog) ? input.auditLog : Array.isArray(input.audit) ? input.audit : []
@@ -140,6 +142,7 @@ function normalizeMultiEventStore(data) {
       budgetCollections: data.budgetCollections || [],
       fundTransactions: data.fundTransactions || [],
       companyClaims: data.companyClaims || [],
+      itinerary: data.itinerary || [],
       finalClosure: data.finalClosure || { status: 'not-calculated', records: [] },
       notifications: data.notifications || []
     });
@@ -952,6 +955,49 @@ function addAuditLog(eventRecord, user, action, entityType, description, details
     details: safeAuditDetails(details)
   });
   eventRecord.auditLog = eventRecord.auditLog.slice(-750);
+}
+
+
+function normalizeItineraryTime(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return /^\d{2}:\d{2}$/.test(text) ? text : '';
+}
+
+function sanitizeItineraryPayload(body = {}) {
+  const input = sanitizeObject(body);
+  const item = {
+    title: String(input.title || '').trim(),
+    date: input.date || '',
+    startTime: normalizeItineraryTime(input.startTime),
+    endTime: normalizeItineraryTime(input.endTime),
+    location: String(input.location || '').trim(),
+    categoryId: input.categoryId || '',
+    notes: String(input.notes || '').trim(),
+    status: ['planned', 'completed', 'cancelled'].includes(input.status) ? input.status : 'planned'
+  };
+
+  if (!item.title) {
+    const error = new Error('Itinerary title is required. Even plans need names, apparently.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!item.date) {
+    const error = new Error('Itinerary date is required. Time travel support remains unfunded.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (item.categoryId && item.categoryId !== PERSONAL_CATEGORY_ID) {
+    // Category existence is checked by the route because it needs the active event.
+  }
+
+  return item;
+}
+
+function itineraryLabel(item = {}) {
+  return `${item.date || 'No date'} ${item.startTime || ''} ${item.title || 'Itinerary item'}`.trim();
 }
 
 function publicAuditEntry(entry) {
@@ -3016,6 +3062,160 @@ app.delete('/api/expenses/:id', asyncHandler(async (req, res) => {
   res.status(204).send();
 }));
 
+
+app.get('/api/itinerary', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  await writeStoreIfDirty(data);
+  res.json(calculateItinerary(activeEvent));
+}));
+
+app.post('/api/itinerary', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  const payload = sanitizeItineraryPayload(req.body);
+  if (payload.categoryId && !activeEvent.categories.some((category) => category.id === payload.categoryId)) {
+    return res.status(400).json({ error: 'Selected itinerary category is not available for this event.' });
+  }
+  const item = {
+    id: `itin-${nanoid(8)}`,
+    ...payload,
+    completedAt: payload.status === 'completed' ? new Date().toISOString() : null,
+    completedBy: payload.status === 'completed' ? currentUser.id : null,
+    cancelledAt: payload.status === 'cancelled' ? new Date().toISOString() : null,
+    cancelledBy: payload.status === 'cancelled' ? currentUser.id : null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  activeEvent.itinerary = Array.isArray(activeEvent.itinerary) ? activeEvent.itinerary : [];
+  activeEvent.itinerary.push(item);
+  addAuditLog(activeEvent, currentUser, 'itinerary.created', 'itinerary', `Added itinerary item ${item.title}.`, {
+    itineraryId: item.id,
+    date: item.date,
+    startTime: item.startTime,
+    location: item.location
+  });
+  await writeStore(data);
+  res.status(201).json(calculateItinerary(activeEvent));
+}));
+
+app.put('/api/itinerary/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.itinerary = Array.isArray(activeEvent.itinerary) ? activeEvent.itinerary : [];
+  const item = requireExistingItem(activeEvent.itinerary.find((entry) => entry.id === req.params.id), 'Itinerary item');
+  const beforeItem = { ...item };
+  const payload = sanitizeItineraryPayload({ ...item, ...req.body });
+  if (payload.categoryId && !activeEvent.categories.some((category) => category.id === payload.categoryId)) {
+    return res.status(400).json({ error: 'Selected itinerary category is not available for this event.' });
+  }
+  Object.assign(item, payload, { updatedAt: new Date().toISOString() });
+  if (item.status !== 'completed') {
+    item.completedAt = null;
+    item.completedBy = null;
+  }
+  if (item.status !== 'cancelled') {
+    item.cancelledAt = null;
+    item.cancelledBy = null;
+  }
+  addAuditLog(activeEvent, currentUser, 'itinerary.updated', 'itinerary', `Updated itinerary item ${item.title}.`, {
+    itineraryId: item.id,
+    before: itineraryLabel(beforeItem),
+    after: itineraryLabel(item)
+  });
+  await writeStore(data);
+  res.json(calculateItinerary(activeEvent));
+}));
+
+app.delete('/api/itinerary/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.itinerary = Array.isArray(activeEvent.itinerary) ? activeEvent.itinerary : [];
+  const item = requireExistingItem(activeEvent.itinerary.find((entry) => entry.id === req.params.id), 'Itinerary item');
+  activeEvent.itinerary = activeEvent.itinerary.filter((entry) => entry.id !== item.id);
+  addAuditLog(activeEvent, currentUser, 'itinerary.deleted', 'itinerary', `Deleted itinerary item ${item.title}.`, {
+    itineraryId: item.id,
+    date: item.date,
+    startTime: item.startTime
+  });
+  await writeStore(data);
+  res.status(204).send();
+}));
+
+app.post('/api/itinerary/:id/complete', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.itinerary = Array.isArray(activeEvent.itinerary) ? activeEvent.itinerary : [];
+  const item = requireExistingItem(activeEvent.itinerary.find((entry) => entry.id === req.params.id), 'Itinerary item');
+  item.status = 'completed';
+  item.completedAt = new Date().toISOString();
+  item.completedBy = currentUser.id;
+  item.cancelledAt = null;
+  item.cancelledBy = null;
+  item.updatedAt = new Date().toISOString();
+  addAuditLog(activeEvent, currentUser, 'itinerary.completed', 'itinerary', `Completed itinerary item ${item.title}.`, { itineraryId: item.id });
+  await writeStore(data);
+  res.json(calculateItinerary(activeEvent));
+}));
+
+app.post('/api/itinerary/:id/reopen', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.itinerary = Array.isArray(activeEvent.itinerary) ? activeEvent.itinerary : [];
+  const item = requireExistingItem(activeEvent.itinerary.find((entry) => entry.id === req.params.id), 'Itinerary item');
+  item.status = 'planned';
+  item.completedAt = null;
+  item.completedBy = null;
+  item.cancelledAt = null;
+  item.cancelledBy = null;
+  item.updatedAt = new Date().toISOString();
+  addAuditLog(activeEvent, currentUser, 'itinerary.reopened', 'itinerary', `Reopened itinerary item ${item.title}.`, { itineraryId: item.id });
+  await writeStore(data);
+  res.json(calculateItinerary(activeEvent));
+}));
+
+app.post('/api/itinerary/:id/cancel', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getActiveEventRecord(data);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.itinerary = Array.isArray(activeEvent.itinerary) ? activeEvent.itinerary : [];
+  const item = requireExistingItem(activeEvent.itinerary.find((entry) => entry.id === req.params.id), 'Itinerary item');
+  item.status = 'cancelled';
+  item.cancelledAt = new Date().toISOString();
+  item.cancelledBy = currentUser.id;
+  item.completedAt = null;
+  item.completedBy = null;
+  item.updatedAt = new Date().toISOString();
+  addAuditLog(activeEvent, currentUser, 'itinerary.cancelled', 'itinerary', `Cancelled itinerary item ${item.title}.`, { itineraryId: item.id });
+  await writeStore(data);
+  res.json(calculateItinerary(activeEvent));
+}));
+
 app.get('/api/dashboard', asyncHandler(async (req, res) => {
   const data = await readStore();
   normalizeMultiEventStore(data);
@@ -3747,6 +3947,25 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     .text(`Organizer: ${sanitizePdfText(report.event.organizer?.name || 'N/A')}${report.event.organizer?.email ? ` (${sanitizePdfText(report.event.organizer.email)})` : ''}`)
     .text(`Event status: ${sanitizePdfText(activeEvent.status || 'active')}`);
 
+
+  if (report.itinerary) {
+    drawPdfSection(doc, 'Itinerary');
+    drawKeyValueGrid(doc, [
+      { label: 'Total activities', value: String(report.itinerary.total || 0) },
+      { label: 'Completed', value: String(report.itinerary.completed || 0) },
+      { label: 'Cancelled', value: String(report.itinerary.cancelled || 0) },
+      { label: 'Progress', value: `${Number(report.itinerary.progressPercent || 0).toFixed(1)}%` }
+    ], currency);
+    drawSimpleTable(doc, [
+      { label: 'Date', key: 'date', weight: 1 },
+      { label: 'Time', value: (row) => [row.startTime, row.endTime].filter(Boolean).join(' - ') || '-', weight: 1 },
+      { label: 'Activity', key: 'title', weight: 2 },
+      { label: 'Location', value: (row) => row.location || '-', weight: 1.5 },
+      { label: 'Status', value: (row) => pdfStatusLabel(row.status), weight: 1 },
+      { label: 'Notes', value: (row) => row.notes || '-', weight: 2 }
+    ], report.itinerary.items || [], { emptyText: 'No itinerary items recorded.', fontSize: 7.5 });
+  }
+
   drawPdfSection(doc, 'Financial summary');
   drawKeyValueGrid(doc, [
     { label: 'Total budget', value: serverMoney(report.totals.totalBudget, currency) },
@@ -3960,6 +4179,10 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
       companyClaimsAddedToPool: report.companyClaims?.poolReceivedTotal ?? '',
       companyClaimsDirectToParticipants: report.companyClaims?.directParticipantTotal ?? '',
       companyClaimsExpenseLockActive: report.companyClaims?.expenseLockActive ?? '',
+      itineraryTotal: report.itinerary?.total ?? '',
+      itineraryCompleted: report.itinerary?.completed ?? '',
+      itineraryCancelled: report.itinerary?.cancelled ?? '',
+      itineraryProgressPercent: report.itinerary?.progressPercent ?? '',
       finalClosureAction: closure.finalAction ?? '',
       finalClosureAmount: closure.finalAmount ?? '',
       finalClosureRoundedAmount: closure.finalAmountRounded ?? '',

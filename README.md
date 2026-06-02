@@ -579,3 +579,7 @@ Received pool-based claims increase the Team Fund Pool and flow into Final Pool 
 ### Expense List Description and Compact Actions Hotfix
 
 The Expenses tab list now shows each expense note/description below the expense title, so users can understand the purpose of an expense without opening edit mode. The row actions were also changed to compact icon buttons for Edit, Approve, Reject, and Delete, reducing horizontal clutter in the expense table.
+
+## Phase 22 - Itinerary Planner
+
+Phase 22 adds an Itinerary tab and Dashboard itinerary preview. Admin and Finance users can maintain the trip schedule with date/time, location, category link, notes, and status. Completed activities are struck through, members can view the schedule read-only, and PDF/CSV reports now include itinerary details. No new environment variables are required.

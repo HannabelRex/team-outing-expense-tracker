@@ -1209,7 +1209,9 @@ function statusBadge(status) {
     submitted: 'bg-blue-50 text-blue-700 ring-blue-200',
     'partially-received': 'bg-purple-50 text-purple-700 ring-purple-200',
     received: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    reopened: 'bg-amber-50 text-amber-700 ring-amber-200'
+    reopened: 'bg-amber-50 text-amber-700 ring-amber-200',
+    cancelled: 'bg-slate-100 text-slate-500 ring-slate-200',
+    planned: 'bg-blue-50 text-blue-700 ring-blue-200'
   };
 
   return `inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles[status] || 'bg-slate-100 text-slate-700 ring-slate-200'}`;
@@ -1238,6 +1240,30 @@ function compactDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return '';
   return parsed.toLocaleString();
+}
+
+
+function timeRangeLabel(item = {}) {
+  const start = item.startTime || '';
+  const end = item.endTime || '';
+  if (start && end) return `${start} - ${end}`;
+  return start || end || 'Any time';
+}
+
+function dateLabel(value) {
+  if (!value) return 'No date';
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function groupItineraryByDate(items = []) {
+  return items.reduce((groups, item) => {
+    const key = item.date || 'No date';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+    return groups;
+  }, {});
 }
 
 function Section({ title, icon: Icon, children, action }) {
@@ -1372,6 +1398,49 @@ function DashboardFlowStep({ icon: Icon, label, value, helper, color }) {
   );
 }
 
+
+function DashboardItineraryCard({ itinerary = {} }) {
+  const todayItems = Array.isArray(itinerary.todayItems) ? itinerary.todayItems : [];
+  const nextItem = itinerary.nextItem || null;
+  const previewItems = todayItems.length > 0 ? todayItems.slice(0, 4) : (nextItem ? [nextItem] : []);
+  const progress = Number(itinerary.progressPercent || 0);
+
+  return (
+    <Section title="Today's itinerary" icon={CalendarDays}>
+      <div className="rounded-3xl bg-gradient-to-br from-blue-50 to-white p-5 ring-1 ring-blue-100">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Trip progress</p>
+            <h3 className="mt-2 text-2xl font-black text-slate-950">{Number(itinerary.completed || 0)}/{Number(itinerary.total || 0)} completed</h3>
+          </div>
+          <span className="rounded-2xl bg-white px-3 py-2 text-sm font-black text-blue-700 ring-1 ring-blue-100">{progress.toFixed(0)}%</span>
+        </div>
+        <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-200">
+          <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+        </div>
+
+        {previewItems.length > 0 ? (
+          <div className="mt-5 space-y-3">
+            {previewItems.map((item) => (
+              <div key={item.id || `${item.date}-${item.title}`} className="flex items-start gap-3 rounded-2xl bg-white/85 p-3 ring-1 ring-slate-100">
+                <span className={`mt-0.5 rounded-full p-1.5 ${item.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : item.status === 'cancelled' ? 'bg-slate-100 text-slate-500' : 'bg-blue-100 text-blue-700'}`}>
+                  {item.status === 'completed' ? <CheckCircle2 size={14} /> : item.status === 'cancelled' ? <X size={14} /> : <CalendarDays size={14} />}
+                </span>
+                <div className="min-w-0">
+                  <p className={`text-sm font-black text-slate-900 ${item.status === 'completed' ? 'line-through decoration-2 decoration-emerald-500' : item.status === 'cancelled' ? 'line-through text-slate-400' : ''}`}>{item.title}</p>
+                  <p className="mt-0.5 text-xs font-semibold text-slate-500">{dateLabel(item.date)} · {timeRangeLabel(item)}{item.location ? ` · ${item.location}` : ''}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-5 rounded-2xl bg-white/80 p-4 text-sm font-semibold text-slate-500 ring-1 ring-slate-100">No itinerary items yet. The trip has plans, hopefully, just not here.</p>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 function Dashboard({ data, activeTheme }) {
   if (data.noAssignedEvent) return <NoAssignedDashboard data={data} />;
 
@@ -1385,6 +1454,7 @@ function Dashboard({ data, activeTheme }) {
   const collection = dashboard.budgetCollection || {};
   const fundPool = dashboard.fundPool || {};
   const companyClaims = dashboard.companyClaims || {};
+  const itinerarySummary = dashboard.itinerarySummary || { items: data.itinerary || [], todayItems: [], total: 0, completed: 0, progressPercent: 0 };
   const pendingExpenses = (data.expenses || []).filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
 
   const totalBudget = Number(dashboard.totalBudget || 0);
@@ -1474,7 +1544,7 @@ function Dashboard({ data, activeTheme }) {
         </div>
       </Section>
 
-      <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="grid gap-5 xl:grid-cols-[1.05fr_0.75fr_0.9fr]">
         <Section title="Next action" icon={nextAction.icon}>
           <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-white p-5 ring-1 ring-slate-100">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Recommended</p>
@@ -1497,6 +1567,7 @@ function Dashboard({ data, activeTheme }) {
             <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Pending approvals</span><strong className={pendingExpenses.length > 0 ? 'text-amber-700' : 'text-emerald-700'}>{pendingExpenses.length}</strong></div>
           </div>
         </Section>
+        <DashboardItineraryCard itinerary={itinerarySummary} />
       </div>
 
       {dashboard.isOverBudget && (
@@ -4174,6 +4245,203 @@ function NotificationInbox({ open, onClose, items, loading, onRefresh, onMarkRea
   );
 }
 
+
+function ItineraryPlanner({ data, reload, setToast }) {
+  const canManage = ['admin', 'finance'].includes(data.currentUser?.role);
+  const summary = data.dashboard?.itinerarySummary || { items: data.itinerary || [], total: 0, completed: 0, cancelled: 0, planned: 0, progressPercent: 0 };
+  const categories = data.categories || [];
+  const [editingId, setEditingId] = useState('');
+  const [busyId, setBusyId] = useState('');
+  const [form, setForm] = useState({
+    title: '',
+    date: data.event?.date || new Date().toISOString().slice(0, 10),
+    startTime: '',
+    endTime: '',
+    location: '',
+    categoryId: '',
+    notes: '',
+    status: 'planned'
+  });
+
+  function resetForm() {
+    setEditingId('');
+    setForm({ title: '', date: data.event?.date || new Date().toISOString().slice(0, 10), startTime: '', endTime: '', location: '', categoryId: '', notes: '', status: 'planned' });
+  }
+
+  function editItem(item) {
+    setEditingId(item.id);
+    setForm({
+      title: item.title || '',
+      date: item.date || data.event?.date || new Date().toISOString().slice(0, 10),
+      startTime: item.startTime || '',
+      endTime: item.endTime || '',
+      location: item.location || '',
+      categoryId: item.categoryId || '',
+      notes: item.notes || '',
+      status: item.status || 'planned'
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function saveItem(event) {
+    event.preventDefault();
+    try {
+      const path = editingId ? `/itinerary/${editingId}` : '/itinerary';
+      const method = editingId ? 'PUT' : 'POST';
+      await api(path, { method, body: JSON.stringify(form) });
+      setToast(editingId ? 'Itinerary item updated.' : 'Itinerary item added. The plan has entered civilization.');
+      resetForm();
+      reload();
+    } catch (err) {
+      setToast(err.message);
+    }
+  }
+
+  async function actionItem(item, action) {
+    setBusyId(`${item.id}-${action}`);
+    try {
+      await api(`/itinerary/${item.id}/${action}`, { method: 'POST' });
+      setToast(action === 'complete' ? 'Itinerary item marked completed.' : action === 'cancel' ? 'Itinerary item cancelled.' : 'Itinerary item reopened.');
+      reload();
+    } catch (err) {
+      setToast(err.message);
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function deleteItem(item) {
+    if (!window.confirm(`Delete itinerary item "${item.title}"?`)) return;
+    setBusyId(`${item.id}-delete`);
+    try {
+      await api(`/itinerary/${item.id}`, { method: 'DELETE' });
+      setToast('Itinerary item deleted. One less plan for humans to ignore.');
+      reload();
+    } catch (err) {
+      setToast(err.message);
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  const grouped = groupItineraryByDate(summary.items || []);
+  const dateKeys = Object.keys(grouped).sort((a, b) => String(a).localeCompare(String(b)));
+  const nextItem = summary.nextItem;
+
+  return (
+    <div className="space-y-6">
+      <Section title="Itinerary planner" icon={CalendarDays}>
+        <div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-semibold text-blue-900">
+          Plan the outing schedule, show today&apos;s activities on the Dashboard, and strike out items as they are completed. Finally, the app tracks something besides money. Progress.
+        </div>
+
+        <div className="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100"><p className="text-sm font-bold text-slate-500">Total activities</p><p className="mt-2 text-2xl font-black">{summary.total || 0}</p></div>
+          <div className="rounded-3xl bg-emerald-50 p-4 ring-1 ring-emerald-100"><p className="text-sm font-bold text-emerald-700">Completed</p><p className="mt-2 text-2xl font-black text-emerald-800">{summary.completed || 0}</p></div>
+          <div className="rounded-3xl bg-blue-50 p-4 ring-1 ring-blue-100"><p className="text-sm font-bold text-blue-700">Planned</p><p className="mt-2 text-2xl font-black text-blue-800">{summary.planned || 0}</p></div>
+          <div className="rounded-3xl bg-violet-50 p-4 ring-1 ring-violet-100"><p className="text-sm font-bold text-violet-700">Trip progress</p><p className="mt-2 text-2xl font-black text-violet-800">{Number(summary.progressPercent || 0).toFixed(1)}%</p></div>
+        </div>
+
+        {nextItem && (
+          <div className="mb-6 rounded-3xl bg-gradient-to-br from-slate-950 to-blue-900 p-5 text-white shadow-soft">
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-100/70">Next activity</p>
+            <h3 className="mt-2 text-2xl font-black">{nextItem.title}</h3>
+            <p className="mt-1 text-sm font-semibold text-blue-50/80">{dateLabel(nextItem.date)} · {timeRangeLabel(nextItem)}{nextItem.location ? ` · ${nextItem.location}` : ''}</p>
+          </div>
+        )}
+
+        {canManage && (
+          <form onSubmit={saveItem} className="mb-6 grid gap-4 rounded-3xl bg-slate-50 p-4 ring-1 ring-slate-100 md:grid-cols-2 xl:grid-cols-4">
+            <label className="text-sm font-bold text-slate-700 xl:col-span-2">Activity title
+              <input className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Day 1 breakfast" required />
+            </label>
+            <label className="text-sm font-bold text-slate-700">Date
+              <input className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+            </label>
+            <label className="text-sm font-bold text-slate-700">Status
+              <select className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                <option value="planned">Planned</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </label>
+            <label className="text-sm font-bold text-slate-700">Start time
+              <input className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} />
+            </label>
+            <label className="text-sm font-bold text-slate-700">End time
+              <input className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} />
+            </label>
+            <label className="text-sm font-bold text-slate-700">Location
+              <input className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Resort dining hall" />
+            </label>
+            <label className="text-sm font-bold text-slate-700">Linked category
+              <select className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}>
+                <option value="">No category link</option>
+                {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select>
+            </label>
+            <label className="text-sm font-bold text-slate-700 xl:col-span-4">Notes
+              <textarea className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-3" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Meeting point, ticket details, reminders..." />
+            </label>
+            <div className="flex flex-wrap gap-3 xl:col-span-4">
+              <button className="rounded-2xl bg-slate-950 px-5 py-3 font-black text-white" type="submit"><Plus className="inline" size={16} /> {editingId ? 'Update item' : 'Add itinerary item'}</button>
+              {editingId && <button className="rounded-2xl border border-slate-200 px-5 py-3 font-black text-slate-700" type="button" onClick={resetForm}>Cancel edit</button>}
+            </div>
+          </form>
+        )}
+
+        {dateKeys.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-slate-300 p-8 text-center text-slate-500">
+            <p className="font-black text-slate-700">No itinerary items yet</p>
+            <p className="mt-1 text-sm">Add the trip plan so the Dashboard can show what is next.</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {dateKeys.map((dateKey) => (
+              <div key={dateKey} className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm">
+                <h3 className="mb-4 flex items-center gap-2 text-lg font-black text-slate-900"><CalendarDays size={18} /> {dateLabel(dateKey)}</h3>
+                <div className="space-y-3">
+                  {grouped[dateKey].map((item) => {
+                    const isDone = item.status === 'completed';
+                    const isCancelled = item.status === 'cancelled';
+                    const category = categories.find((cat) => cat.id === item.categoryId);
+                    return (
+                      <div key={item.id} className={`rounded-3xl border p-4 ${isDone ? 'border-emerald-100 bg-emerald-50/60' : isCancelled ? 'border-slate-200 bg-slate-50' : 'border-blue-100 bg-blue-50/35'}`}>
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={statusBadge(item.status)}>{item.status}</span>
+                              <span className="text-sm font-black text-slate-500">{timeRangeLabel(item)}</span>
+                              {category && <span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-slate-500 ring-1 ring-slate-200">{category.name}</span>}
+                            </div>
+                            <h4 className={`mt-2 text-xl font-black ${isDone || isCancelled ? 'line-through decoration-2' : ''} ${isCancelled ? 'text-slate-400' : 'text-slate-950'}`}>{item.title}</h4>
+                            {item.location && <p className="mt-1 text-sm font-semibold text-slate-600"><MapPin className="inline" size={14} /> {item.location}</p>}
+                            {item.notes && <p className="mt-2 text-sm text-slate-500">{item.notes}</p>}
+                            {item.completedAt && <p className="mt-2 text-xs font-semibold text-emerald-700">Completed {compactDateTime(item.completedAt)}</p>}
+                          </div>
+                          {canManage && (
+                            <div className="flex flex-wrap gap-2 lg:justify-end">
+                              {item.status !== 'completed' && <button className="rounded-2xl border border-emerald-200 px-3 py-2 text-xs font-black text-emerald-700" disabled={busyId === `${item.id}-complete`} onClick={() => actionItem(item, 'complete')} type="button"><CheckCircle2 className="inline" size={14} /> Complete</button>}
+                              {item.status !== 'planned' && <button className="rounded-2xl border border-blue-200 px-3 py-2 text-xs font-black text-blue-700" disabled={busyId === `${item.id}-reopen`} onClick={() => actionItem(item, 'reopen')} type="button"><RefreshCw className="inline" size={14} /> Reopen</button>}
+                              {item.status !== 'cancelled' && <button className="rounded-2xl border border-amber-200 px-3 py-2 text-xs font-black text-amber-700" disabled={busyId === `${item.id}-cancel`} onClick={() => actionItem(item, 'cancel')} type="button"><X className="inline" size={14} /> Cancel</button>}
+                              <button className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-black text-slate-700" onClick={() => editItem(item)} type="button"><Pencil className="inline" size={14} /> Edit</button>
+                              <button className="rounded-2xl border border-rose-200 px-3 py-2 text-xs font-black text-rose-700" disabled={busyId === `${item.id}-delete`} onClick={() => deleteItem(item)} type="button"><Trash2 className="inline" size={14} /> Delete</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
 function Reports({ data, setToast, activeTheme }) {
   const currency = data.event.currency;
   const [busy, setBusy] = useState('');
@@ -5438,6 +5706,7 @@ function AppShell() {
         ['expenses', 'Expenses'],
         ['settlements', 'Settlements'],
         ['claims', 'Claims'],
+        ['itinerary', 'Itinerary'],
         ['reports', 'Reports']
       );
     }
@@ -5593,6 +5862,7 @@ function AppShell() {
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'claims' && <Claims data={data} reload={reload} setToast={setToast} />}
+        {activeTab === 'itinerary' && <ItineraryPlanner data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'reports' && <Reports data={data} setToast={setToast} activeTheme={activeTheme} />}
         {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
