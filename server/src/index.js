@@ -104,6 +104,7 @@ function buildEventRecord(input = {}) {
       estimatedBudget: roundMoney(Number(event.estimatedBudget || 0)),
       currency: event.currency || 'INR',
       settlementDeadline: event.settlementDeadline || '',
+      financierParticipantId: event.financierParticipantId || event.fundPoolHandlerParticipantId || event.commonPoolHandlerParticipantId || '',
       organizer: event.organizer || { name: '', email: '' }
     },
     participants: Array.isArray(input.participants) ? input.participants : [],
@@ -137,6 +138,9 @@ function normalizeMultiEventStore(data) {
   } else {
     data.events = data.events.map((record) => {
       const normalizedRecord = buildEventRecord(record);
+      if (normalizedRecord.event.financierParticipantId && !normalizedRecord.participants.some((participant) => participant.id === normalizedRecord.event.financierParticipantId)) {
+        normalizedRecord.event.financierParticipantId = '';
+      }
       syncEventBudgetFromCategories(normalizedRecord);
       return normalizedRecord;
     });
@@ -204,6 +208,7 @@ function buildUnassignedMemberEventRecord(user = {}) {
       estimatedBudget: 0,
       currency: 'INR',
       settlementDeadline: '',
+      financierParticipantId: '',
       organizer: {
         name: 'Admin',
         email: ''
@@ -2133,9 +2138,16 @@ app.put('/api/event', asyncHandler(async (req, res) => {
   requireRole(currentUser, ['admin', 'finance']);
   const activeEvent = getActiveEventRecord(data);
   assertActiveEventEditable(activeEvent);
+  const sanitizedBody = sanitizeObject(req.body);
+  const requestedFinancierId = sanitizedBody.financierParticipantId || '';
+  if (requestedFinancierId && !activeEvent.participants.some((participant) => participant.id === requestedFinancierId)) {
+    return res.status(400).json({ error: 'Select a valid participant as the common pool handler/financier.' });
+  }
+
   const nextEvent = {
     ...activeEvent.event,
-    ...sanitizeObject(req.body),
+    ...sanitizedBody,
+    financierParticipantId: requestedFinancierId,
     estimatedBudget: syncEventBudgetFromCategories(activeEvent)
   };
 
@@ -2151,7 +2163,9 @@ app.put('/api/event', asyncHandler(async (req, res) => {
     beforeBudget: beforeEvent.estimatedBudget,
     afterBudget: nextEvent.estimatedBudget,
     beforeDate: beforeEvent.date,
-    afterDate: nextEvent.date
+    afterDate: nextEvent.date,
+    beforeFinancier: participantLabel(activeEvent, beforeEvent.financierParticipantId),
+    afterFinancier: participantLabel(activeEvent, nextEvent.financierParticipantId)
   });
   await writeStore(data);
   res.json({ ...activeEvent.event, status: activeEvent.status });
@@ -2593,20 +2607,25 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
   const currentUser = resolveAppUser(data, req.authUser);
   const activeEvent = getEventRecordForUser(data, currentUser);
   assertActiveEventEditable(activeEvent);
+  const paymentSource = req.body.paymentSource === 'pool' ? 'pool' : 'participant';
+  if (paymentSource === 'pool' && !activeEvent.event.financierParticipantId) {
+    return res.status(400).json({ error: 'Set the common pool handler/financier in Event setup before recording expenses from the team fund pool.' });
+  }
+  const financierParticipantId = activeEvent.event.financierParticipantId || '';
   const expense = {
     id: `e-${nanoid(8)}`,
     title: req.body.title,
     amount: roundMoney(Number(req.body.amount)),
     categoryId: req.body.categoryId,
     date: req.body.date,
-    paidByParticipantId: req.body.paidByParticipantId,
-    participantIds: req.body.participantIds || [],
-    splitMethod: req.body.splitMethod || 'equal',
-    customSplits: req.body.customSplits || [],
-    percentageSplits: req.body.percentageSplits || [],
+    paidByParticipantId: paymentSource === 'pool' ? financierParticipantId : req.body.paidByParticipantId,
+    participantIds: paymentSource === 'pool' ? [] : (req.body.participantIds || []),
+    splitMethod: paymentSource === 'pool' ? 'pool' : (req.body.splitMethod || 'equal'),
+    customSplits: paymentSource === 'pool' ? [] : (req.body.customSplits || []),
+    percentageSplits: paymentSource === 'pool' ? [] : (req.body.percentageSplits || []),
     paymentMethod: req.body.paymentMethod,
-    paymentSource: req.body.paymentSource === 'pool' ? 'pool' : 'participant',
-    handledByParticipantId: req.body.handledByParticipantId || req.body.paidByParticipantId || '',
+    paymentSource,
+    handledByParticipantId: paymentSource === 'pool' ? financierParticipantId : '',
     notes: req.body.notes || '',
     receipt: req.body.receipt || null,
     approvalStatus: req.body.approvalStatus || 'pending',
@@ -2663,6 +2682,20 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
     ...req.body,
     amount: roundMoney(Number(req.body.amount ?? expense.amount))
   };
+  if (nextExpense.paymentSource === 'pool') {
+    if (!activeEvent.event.financierParticipantId) {
+      return res.status(400).json({ error: 'Set the common pool handler/financier in Event setup before recording expenses from the team fund pool.' });
+    }
+    nextExpense.paidByParticipantId = activeEvent.event.financierParticipantId;
+    nextExpense.handledByParticipantId = activeEvent.event.financierParticipantId;
+    nextExpense.participantIds = [];
+    nextExpense.splitMethod = 'pool';
+    nextExpense.customSplits = [];
+    nextExpense.percentageSplits = [];
+  } else {
+    nextExpense.handledByParticipantId = '';
+  }
+
   const shouldCleanupOldReceipt = Boolean(beforeExpense.receipt) && !sameReceiptReference(beforeExpense.receipt, nextExpense.receipt);
 
   validateExpensePayload(nextExpense);

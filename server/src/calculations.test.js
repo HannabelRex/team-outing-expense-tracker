@@ -179,5 +179,19 @@ const fundDashboard = calculateDashboard(fundPoolData);
 const handlerBalance = fundDashboard.participantBalances.find((balance) => balance.participantId === 'p1');
 assert.equal(handlerBalance.amountPaid, 0, 'Pool expense handler should not receive personal paid credit');
 assert.equal(fundDashboard.fundPool.currentBalance, 650);
+assert.deepEqual(calculateExpenseShares({
+  title: 'Pool expense without participant split',
+  amount: 250,
+  categoryId: 'c-food',
+  date: '2026-07-21',
+  paidByParticipantId: 'p1',
+  handledByParticipantId: 'p1',
+  paymentSource: 'pool',
+  participantIds: [],
+  splitMethod: 'pool',
+  customSplits: [],
+  percentageSplits: [],
+  paymentMethod: 'UPI'
+}), []);
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');

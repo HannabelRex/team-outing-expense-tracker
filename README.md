@@ -2,6 +2,11 @@
 
 This package upgrades the Team Outing Expense Tracker with offline receipt attachment support for expense drafts.
 
+
+### Fund Pool Financier Handler Hotfix
+
+The Event setup page now stores a common pool handler / financier. When an expense is marked as paid from the team fund pool, the expense form automatically uses that financier as the handler, hides split method and participant split selection, and backend logic prevents pool expenses from creating personal participant split shares. Personal participant-paid expenses continue to use normal split logic.
+
 ### Budget Tab Authoritative Budget Hotfix
 
 - Event budget is now calculated from the Budget tab category estimates.

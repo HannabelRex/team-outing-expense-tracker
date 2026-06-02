@@ -238,6 +238,10 @@ export function validateExpensePayload(expense) {
 
   assertPositiveAmount(expense.amount, 'Expense amount');
 
+  if (isPoolExpense(expense)) {
+    return true;
+  }
+
   if (!Array.isArray(expense.participantIds) || expense.participantIds.length === 0) {
     throw new Error('Select at least one participant for the expense split.');
   }
@@ -252,6 +256,10 @@ export function validateExpensePayload(expense) {
 
 export function calculateExpenseShares(expense) {
   validateExpensePayload(expense);
+
+  if (isPoolExpense(expense)) {
+    return [];
+  }
 
   const amount = roundMoney(Number(expense.amount));
   const participantIds = [...new Set(expense.participantIds)];

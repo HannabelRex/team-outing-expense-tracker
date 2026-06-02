@@ -346,14 +346,17 @@ function parseSplitText(text, key) {
 }
 
 function buildExpensePayload(form) {
+  const isPoolExpense = form.paymentSource === 'pool';
   const payload = {
     ...form,
     amount: Number(form.amount),
     receipt: form.receipt || null,
-    customSplits: parseSplitText(form.customSplitsText, 'amount'),
-    percentageSplits: parseSplitText(form.percentageSplitsText, 'percentage'),
+    customSplits: isPoolExpense ? [] : parseSplitText(form.customSplitsText, 'amount'),
+    percentageSplits: isPoolExpense ? [] : parseSplitText(form.percentageSplitsText, 'percentage'),
     paymentSource: form.paymentSource || 'participant',
-    handledByParticipantId: form.paymentSource === 'pool' ? form.paidByParticipantId : ''
+    handledByParticipantId: isPoolExpense ? form.paidByParticipantId : '',
+    participantIds: isPoolExpense ? [] : form.participantIds,
+    splitMethod: isPoolExpense ? 'pool' : (form.splitMethod || 'equal')
   };
 
   delete payload.customSplitsText;
@@ -566,10 +569,13 @@ function validateOfflineExpenseDraft(data, payload) {
   if (!payload.categoryId || !data.categories.some((category) => category.id === payload.categoryId)) throw new Error('Pick a valid category before saving this offline draft.');
   if (!payload.paidByParticipantId || !data.participants.some((participant) => participant.id === payload.paidByParticipantId)) throw new Error(payload.paymentSource === 'pool' ? 'Pick a valid handler for this pool expense.' : 'Pick a valid paid-by participant before saving this offline draft.');
   if (payload.paymentSource === 'pool' && data.currentUser?.role === 'member') throw new Error('Members cannot save team fund pool expenses. Ask Admin or Finance to record spending from the collected pool.');
-  if (!Array.isArray(payload.participantIds) || payload.participantIds.length === 0) throw new Error('Select at least one participant involved in the expense.');
-  const participantIds = new Set(data.participants.map((participant) => participant.id));
-  const missingParticipant = payload.participantIds.find((participantId) => !participantIds.has(participantId));
-  if (missingParticipant) throw new Error('One selected participant is no longer valid. Refresh when online before syncing.');
+  if (payload.paymentSource === 'pool' && !data.event?.financierParticipantId) throw new Error('Set the common pool handler/financier in Event setup before saving a team fund pool expense.');
+  if (payload.paymentSource !== 'pool') {
+    if (!Array.isArray(payload.participantIds) || payload.participantIds.length === 0) throw new Error('Select at least one participant involved in the expense.');
+    const participantIds = new Set(data.participants.map((participant) => participant.id));
+    const missingParticipant = payload.participantIds.find((participantId) => !participantIds.has(participantId));
+    if (missingParticipant) throw new Error('One selected participant is no longer valid. Refresh when online before syncing.');
+  }
   if (data.currentUser?.role === 'member') {
     const paidByParticipant = data.participants.find((participant) => participant.id === payload.paidByParticipantId);
     if (!participantMatchesCurrentUser(paidByParticipant, data.currentUser)) {
@@ -1629,7 +1635,7 @@ function EventSetup({ data, reload, setToast, canManageEventSetup }) {
 
   useEffect(() => {
     setForm(data.event);
-  }, [data.event?.id, data.event?.name, data.event?.date, data.event?.location, data.event?.currency, data.event?.settlementDeadline]);
+  }, [data.event?.id, data.event?.name, data.event?.date, data.event?.location, data.event?.currency, data.event?.settlementDeadline, data.event?.financierParticipantId]);
 
   async function saveEvent(event) {
     event.preventDefault();
@@ -1657,6 +1663,7 @@ function EventSetup({ data, reload, setToast, canManageEventSetup }) {
           <ReadOnlyField label="Settlement deadline" value={data.event.settlementDeadline || 'Not set'} />
           <ReadOnlyField label="Organizer name" value={data.event.organizer?.name || 'Not set'} />
           <ReadOnlyField label="Organizer email" value={data.event.organizer?.email || 'Not set'} />
+          <ReadOnlyField label="Common pool handler / financier" value={data.participants.find((participant) => participant.id === data.event.financierParticipantId)?.name || 'Not set'} />
         </div>
       </Section>
     );
@@ -1675,6 +1682,13 @@ function EventSetup({ data, reload, setToast, canManageEventSetup }) {
         <label className="field-label">Settlement deadline<input className="input" type="date" value={form.settlementDeadline || ''} onChange={(e) => setForm({ ...form, settlementDeadline: e.target.value })} /></label>
         <label className="field-label">Organizer name<input className="input" value={form.organizer?.name || ''} onChange={(e) => setForm({ ...form, organizer: { ...form.organizer, name: e.target.value } })} /></label>
         <label className="field-label">Organizer email<input className="input" type="email" value={form.organizer?.email || ''} onChange={(e) => setForm({ ...form, organizer: { ...form.organizer, email: e.target.value } })} /></label>
+        <label className="field-label md:col-span-2">Common pool handler / financier
+          <select className="input" value={form.financierParticipantId || ''} onChange={(e) => setForm({ ...form, financierParticipantId: e.target.value })}>
+            <option value="">Select who manages the collected team fund pool</option>
+            {data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}
+          </select>
+          <span className="mt-1 block text-xs font-semibold text-slate-500">Used automatically as the handler for expenses paid from the team fund pool.</span>
+        </label>
         <div className="md:col-span-2">
           <button className="btn-primary" type="submit">Save event</button>
         </div>
@@ -2473,6 +2487,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
   const [offlineDrafts, setOfflineDrafts] = useState(() => eventOfflineExpenseDrafts(data));
   const [syncingDrafts, setSyncingDrafts] = useState(false);
   const currency = data.event.currency;
+  const financierParticipant = data.participants.find((participant) => participant.id === data.event?.financierParticipantId);
+  const financierName = financierParticipant?.name || '';
 
   const expenseRows = useMemo(() => {
     const categoryMap = new Map(data.categories.map((category) => [category.id, category.name]));
@@ -2581,6 +2597,30 @@ function Expenses({ data, reload, setToast, isOnline }) {
       ? form.participantIds.filter((participantId) => participantId !== id)
       : [...form.participantIds, id];
     setForm({ ...form, participantIds: next });
+  }
+
+  function handlePaymentSourceChange(paymentSource) {
+    if (paymentSource === 'pool') {
+      setForm({
+        ...form,
+        paymentSource,
+        paidByParticipantId: data.event?.financierParticipantId || '',
+        handledByParticipantId: data.event?.financierParticipantId || '',
+        participantIds: [],
+        splitMethod: 'pool',
+        customSplitsText: '',
+        percentageSplitsText: ''
+      });
+      return;
+    }
+
+    setForm({
+      ...form,
+      paymentSource,
+      paidByParticipantId: form.paidByParticipantId || data.participants[0]?.id || '',
+      participantIds: form.participantIds?.length ? form.participantIds : data.participants.filter((participant) => participant.attendanceStatus !== 'not-attending').map((participant) => participant.id),
+      splitMethod: form.splitMethod === 'pool' ? 'equal' : (form.splitMethod || 'equal')
+    });
   }
 
   async function saveOfflineDraft(payload, receiptFile = null, receiptInfo = null) {
@@ -2718,6 +2758,9 @@ function Expenses({ data, reload, setToast, isOnline }) {
     setBusy(true);
     try {
       const payload = buildExpensePayload(form);
+      if (payload.paymentSource === 'pool' && !data.event?.financierParticipantId) {
+        throw new Error('Set the common pool handler/financier in Event setup before recording an expense from the team fund pool.');
+      }
       if (!isOnline) {
         if (editingExpenseId) {
           throw new Error('Offline editing is blocked. Create a new offline draft or reconnect before changing existing expenses.');
@@ -2779,11 +2822,17 @@ function Expenses({ data, reload, setToast, isOnline }) {
           <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
           <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
           <label className="field-label">Category<select className="input" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} required>{data.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-          <label className="field-label">Payment source<select className="input" value={form.paymentSource} onChange={(e) => setForm({ ...form, paymentSource: e.target.value })}><option value="participant">Paid by participant personally</option>{data.currentUser?.role !== 'member' && <option value="pool">Paid from team fund pool</option>}</select></label>
-          <label className="field-label">{form.paymentSource === 'pool' ? 'Handled by' : 'Paid by'}<select className="input" value={form.paidByParticipantId} onChange={(e) => setForm({ ...form, paidByParticipantId: e.target.value })} required>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
+          <label className="field-label">Payment source<select className="input" value={form.paymentSource} onChange={(e) => handlePaymentSourceChange(e.target.value)}><option value="participant">Paid by participant personally</option>{data.currentUser?.role !== 'member' && <option value="pool">Paid from team fund pool</option>}</select></label>
+          {form.paymentSource === 'pool' ? (
+            <div className="field-label">Handled by financier
+              <div className="input flex items-center bg-slate-50 text-slate-900">{financierName || 'Set financier in Event setup'}</div>
+            </div>
+          ) : (
+            <label className="field-label">Paid by<select className="input" value={form.paidByParticipantId} onChange={(e) => setForm({ ...form, paidByParticipantId: e.target.value })} required>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
+          )}
           <label className="field-label">Payment method<select className="input" value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}><option>UPI</option><option>Card</option><option>Cash</option><option>Bank transfer</option><option>Corporate card</option></select></label>
-          {form.paymentSource === 'pool' && <div className="lg:col-span-3 rounded-2xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200">This expense will reduce the collected team fund pool and will not give personal paid-credit to the handler.</div>}
-          <label className="field-label">Split method<select className="input" value={form.splitMethod} onChange={(e) => setForm({ ...form, splitMethod: e.target.value })}><option value="equal">Equal among selected</option><option value="selected">Selected participants</option><option value="custom">Custom amount</option><option value="percentage">Percentage</option></select></label>
+          {form.paymentSource === 'pool' && <div className="lg:col-span-3 rounded-2xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200">This expense will reduce the collected team fund pool, will be handled by the Event setup financier, and will not create participant split shares because contributions were already collected upfront.</div>}
+          {form.paymentSource !== 'pool' && <label className="field-label">Split method<select className="input" value={form.splitMethod} onChange={(e) => setForm({ ...form, splitMethod: e.target.value })}><option value="equal">Equal among selected</option><option value="selected">Selected participants</option><option value="custom">Custom amount</option><option value="percentage">Percentage</option></select></label>}
 
           <div className="field-label">
             Receipt upload
@@ -2814,22 +2863,26 @@ function Expenses({ data, reload, setToast, isOnline }) {
           </div>
           <label className="field-label">Approval status<select className="input" value={form.approvalStatus} onChange={(e) => setForm({ ...form, approvalStatus: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></label>
 
-          <div className="lg:col-span-3">
-            <p className="field-label mb-2">Participants involved</p>
-            <div className="flex flex-wrap gap-2">
-              {data.participants.map((participant) => (
-                <button key={participant.id} className={`rounded-full px-3 py-2 text-sm ring-1 ${form.participantIds.includes(participant.id) ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-700 ring-slate-200'}`} type="button" onClick={() => toggleParticipant(participant.id)}>
-                  {participant.name}
-                </button>
-              ))}
-            </div>
-          </div>
+          {form.paymentSource !== 'pool' && (
+            <>
+              <div className="lg:col-span-3">
+                <p className="field-label mb-2">Participants involved</p>
+                <div className="flex flex-wrap gap-2">
+                  {data.participants.map((participant) => (
+                    <button key={participant.id} className={`rounded-full px-3 py-2 text-sm ring-1 ${form.participantIds.includes(participant.id) ? 'bg-slate-900 text-white ring-slate-900' : 'bg-white text-slate-700 ring-slate-200'}`} type="button" onClick={() => toggleParticipant(participant.id)}>
+                      {participant.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {form.splitMethod === 'custom' && (
-            <label className="field-label lg:col-span-3">Custom splits, one per line: participantId:amount<textarea className="input min-h-24" value={form.customSplitsText} onChange={(e) => setForm({ ...form, customSplitsText: e.target.value })} placeholder="p-001:500\np-002:750" /></label>
-          )}
-          {form.splitMethod === 'percentage' && (
-            <label className="field-label lg:col-span-3">Percentage splits, one per line: participantId:percentage<textarea className="input min-h-24" value={form.percentageSplitsText} onChange={(e) => setForm({ ...form, percentageSplitsText: e.target.value })} placeholder="p-001:40\np-002:60" /></label>
+              {form.splitMethod === 'custom' && (
+                <label className="field-label lg:col-span-3">Custom splits, one per line: participantId:amount<textarea className="input min-h-24" value={form.customSplitsText} onChange={(e) => setForm({ ...form, customSplitsText: e.target.value })} placeholder="p-001:500\np-002:750" /></label>
+              )}
+              {form.splitMethod === 'percentage' && (
+                <label className="field-label lg:col-span-3">Percentage splits, one per line: participantId:percentage<textarea className="input min-h-24" value={form.percentageSplitsText} onChange={(e) => setForm({ ...form, percentageSplitsText: e.target.value })} placeholder="p-001:40\np-002:60" /></label>
+              )}
+            </>
           )}
 
           <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
