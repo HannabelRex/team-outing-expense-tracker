@@ -550,3 +550,8 @@ The Reports tab pie chart now uses the active theme palette, with colored slices
 ## Final Pool Closure Recovery Hotfix
 
 Restored the Phase 20 Final Pool Closure section under Settlements and the related backend/report logic after it was missing from the current working copy.
+
+
+### Final Closure Whole-Rupee Rounding Hotfix
+
+Final pool closure now shows whole-rupee rounded amounts for actual refunds/collections while preserving exact non-rounded values and round-off adjustments for reconciliation. Example: `₹111.54` is payable as `₹112`, while `₹111.39` is payable as `₹111`.

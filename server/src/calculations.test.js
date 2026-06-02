@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, calculateFundPool, generateSettlementPlan } from './calculations.js';
+import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, calculateFinalClosure, calculateFundPool, generateSettlementPlan } from './calculations.js';
 
 const equalExpense = {
   title: 'Snacks',
@@ -271,5 +271,34 @@ const offBudgetPayer = personalDashboard.participantBalances.find((balance) => b
 const offBudgetOwer = personalDashboard.participantBalances.find((balance) => balance.participantId === 'op2');
 assert.equal(offBudgetPayer.netBalance, 300, 'Personal off-budget expenses should still affect settlement splits');
 assert.equal(offBudgetOwer.netBalance, -300, 'Selected participants should owe their share of personal off-budget expenses');
+
+
+const finalClosureRoundingData = {
+  event: { estimatedBudget: 200 },
+  participants: [
+    { id: 'fc1', name: 'Closure A', emailOrPhone: 'a@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' },
+    { id: 'fc2', name: 'Closure B', emailOrPhone: 'b@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' }
+  ],
+  categories: [{ id: 'c-close', name: 'Closure', estimatedCost: 200 }],
+  budgetCollections: [
+    { participantId: 'fc1', expectedAmount: 100, payments: [{ id: 'fcp1', amount: 100, paidAt: '2026-07-28', mode: 'UPI' }] },
+    { participantId: 'fc2', expectedAmount: 100, payments: [{ id: 'fcp2', amount: 100, paidAt: '2026-07-28', mode: 'UPI' }] }
+  ],
+  fundTransactions: [
+    { id: 'fcadj', type: 'adjustment', amount: 23.08, date: '2026-07-29', mode: 'Other', note: 'Rounding test adjustment' }
+  ],
+  expenses: [],
+  settlements: []
+};
+
+const finalClosureRounding = calculateFinalClosure(finalClosureRoundingData);
+assert.equal(finalClosureRounding.currentPoolBalance, 223.08);
+assert.equal(finalClosureRounding.rows[0].poolRefundShare, 111.54);
+assert.equal(finalClosureRounding.rows[0].poolRefundShareRounded, 112);
+assert.equal(finalClosureRounding.rows[0].finalAmountRounded, 112);
+assert.equal(finalClosureRounding.rows[0].roundingAdjustment, 0.46);
+assert.equal(finalClosureRounding.totalRefundDue, 223.08);
+assert.equal(finalClosureRounding.totalRefundDueRounded, 224);
+assert.equal(finalClosureRounding.totalRoundingAdjustment, 0.92);
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');

@@ -8,6 +8,13 @@ export function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
+export function roundWholeMoney(value) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) return 0;
+  const sign = numericValue < 0 ? -1 : 1;
+  return sign * Math.round(Math.abs(numericValue));
+}
+
 export function roundCollectionAmount(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue) || numericValue <= 0) return 0;
@@ -302,6 +309,13 @@ export function calculateFinalClosure(data) {
     const settlementAdjustment = roundMoney(settlementReceivable - settlementPayable);
     const finalAmount = roundMoney(poolRefundShare - poolDeficitShare + settlementAdjustment - pendingCollection);
     const absoluteFinalAmount = roundMoney(Math.abs(finalAmount));
+    const poolRefundShareRounded = roundWholeMoney(poolRefundShare);
+    const poolDeficitShareRounded = roundWholeMoney(poolDeficitShare);
+    const settlementAdjustmentRounded = roundWholeMoney(settlementAdjustment);
+    const pendingCollectionRounded = roundWholeMoney(pendingCollection);
+    const finalAmountRounded = roundWholeMoney(finalAmount);
+    const absoluteFinalAmountRounded = Math.abs(finalAmountRounded);
+    const roundingAdjustment = roundMoney(finalAmountRounded - finalAmount);
     const finalAction = finalAmount > EPSILON ? 'refund-due' : finalAmount < -EPSILON ? 'collect-due' : 'settled';
     const record = recordMap.get(participant.id) || {};
     const completionStatus = finalAction === 'settled'
@@ -320,12 +334,19 @@ export function calculateFinalClosure(data) {
       expectedCollection,
       pendingCollection,
       poolRefundShare,
+      poolRefundShareRounded,
       poolDeficitShare,
+      poolDeficitShareRounded,
       settlementPayable,
       settlementReceivable,
       settlementAdjustment,
+      settlementAdjustmentRounded,
+      pendingCollectionRounded,
       finalAmount,
+      finalAmountRounded,
       absoluteFinalAmount,
+      absoluteFinalAmountRounded,
+      roundingAdjustment,
       finalAction,
       completionStatus,
       recordedAmount: roundMoney(Number(record.amount || 0)),
@@ -339,6 +360,16 @@ export function calculateFinalClosure(data) {
   const totalRefundDue = roundMoney(rows.filter((row) => row.finalAmount > EPSILON).reduce((sum, row) => sum + row.finalAmount, 0));
   const totalCollectDue = roundMoney(rows.filter((row) => row.finalAmount < -EPSILON).reduce((sum, row) => sum + Math.abs(row.finalAmount), 0));
   const totalNetFinal = roundMoney(rows.reduce((sum, row) => sum + row.finalAmount, 0));
+  const totalRefundDueRounded = rows
+    .filter((row) => row.finalAmount > EPSILON)
+    .reduce((sum, row) => sum + row.absoluteFinalAmountRounded, 0);
+  const totalCollectDueRounded = rows
+    .filter((row) => row.finalAmount < -EPSILON)
+    .reduce((sum, row) => sum + row.absoluteFinalAmountRounded, 0);
+  const totalNetFinalRounded = rows.reduce((sum, row) => sum + row.finalAmountRounded, 0);
+  const totalRoundingAdjustment = roundMoney(totalNetFinalRounded - totalNetFinal);
+  const totalRefundRoundingAdjustment = roundMoney(totalRefundDueRounded - totalRefundDue);
+  const totalCollectRoundingAdjustment = roundMoney(totalCollectDueRounded - totalCollectDue);
   const completedCount = rows.filter((row) => row.finalAction === 'settled' || row.completionStatus === 'refund-paid' || row.completionStatus === 'amount-collected' || row.completionStatus === 'waived').length;
   const pendingCount = rows.length - completedCount;
 
@@ -355,8 +386,14 @@ export function calculateFinalClosure(data) {
     totalSettlementPayable: roundMoney(rows.reduce((sum, row) => sum + row.settlementPayable, 0)),
     totalSettlementReceivable: roundMoney(rows.reduce((sum, row) => sum + row.settlementReceivable, 0)),
     totalRefundDue,
+    totalRefundDueRounded,
+    totalRefundRoundingAdjustment,
     totalCollectDue,
+    totalCollectDueRounded,
+    totalCollectRoundingAdjustment,
     totalNetFinal,
+    totalNetFinalRounded,
+    totalRoundingAdjustment,
     completedCount,
     pendingCount,
     allClosed: pendingCount === 0 && rows.length > 0,

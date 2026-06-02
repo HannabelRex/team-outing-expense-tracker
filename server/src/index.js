@@ -2943,7 +2943,9 @@ app.post('/api/final-closure/:participantId/mark', asyncHandler(async (req, res)
   }
 
   record.status = status;
-  record.amount = status === 'pending' ? 0 : roundMoney(Number(req.body.amount ?? row.absoluteFinalAmount ?? 0));
+  record.amount = status === 'pending' ? 0 : roundMoney(Number(req.body.amount ?? row.absoluteFinalAmountRounded ?? row.absoluteFinalAmount ?? 0));
+  record.exactAmount = status === 'pending' ? 0 : roundMoney(Number(row.absoluteFinalAmount || 0));
+  record.roundingAdjustment = status === 'pending' ? 0 : roundMoney(Number(record.amount || 0) - Number(row.absoluteFinalAmount || 0));
   record.mode = sanitizeObject(req.body).mode || record.mode || 'UPI';
   record.reference = sanitizeObject(req.body).reference || '';
   record.note = sanitizeObject(req.body).note || '';
@@ -3400,6 +3402,15 @@ function serverMoney(value, currency = 'INR') {
   return `${currencyCode} ${formattedAmount}`;
 }
 
+
+function formatClosureAmount(roundedValue, exactValue, currency = 'INR') {
+  const rounded = Number(roundedValue ?? exactValue ?? 0);
+  const exact = Number(exactValue ?? roundedValue ?? 0);
+  const roundedLabel = serverMoney(rounded, currency).replace(/\.00$/, '');
+  if (Math.abs(rounded - exact) < 0.005) return roundedLabel;
+  return `${roundedLabel} (exact ${serverMoney(exact, currency)})`;
+}
+
 function safeReportFileName(value = 'team-outing-expense-report') {
   return String(value)
     .replace(/[^a-zA-Z0-9]+/g, '-')
@@ -3586,10 +3597,10 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
   drawSimpleTable(doc, [
     { label: 'Participant', key: 'name', weight: 1.6 },
     { label: 'Pool paid', value: (row) => serverMoney(row.paidToPool, currency), weight: 1 },
-    { label: 'Pool refund', value: (row) => serverMoney(row.poolRefundShare, currency), weight: 1 },
-    { label: 'Settlement adj.', value: (row) => serverMoney(row.settlementAdjustment, currency), weight: 1 },
-    { label: 'Pending coll.', value: (row) => serverMoney(row.pendingCollection, currency), weight: 1 },
-    { label: 'Final', value: (row) => `${row.finalAction === 'collect-due' ? 'Collect ' : row.finalAction === 'refund-due' ? 'Refund ' : ''}${serverMoney(Math.abs(row.finalAmount || 0), currency)}`, weight: 1.2 },
+    { label: 'Pool refund', value: (row) => formatClosureAmount(row.poolRefundShareRounded, row.poolRefundShare, currency), weight: 1 },
+    { label: 'Settlement adj.', value: (row) => formatClosureAmount(row.settlementAdjustmentRounded, row.settlementAdjustment, currency), weight: 1 },
+    { label: 'Pending coll.', value: (row) => formatClosureAmount(row.pendingCollectionRounded, row.pendingCollection, currency), weight: 1 },
+    { label: 'Final', value: (row) => `${row.finalAction === 'collect-due' ? 'Collect ' : row.finalAction === 'refund-due' ? 'Refund ' : ''}${formatClosureAmount(row.absoluteFinalAmountRounded, row.absoluteFinalAmount, currency)}`, weight: 1.2 },
     { label: 'Status', value: (row) => pdfStatusLabel(row.completionStatus), weight: 1 }
   ], report.finalClosure?.rows || [], { emptyText: 'No final closure calculation available.', fontSize: 7.3 });
 
@@ -3689,6 +3700,9 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
       fundPoolReimbursed: report.fundPool?.reimbursementTotal ?? '',
       finalClosureAction: closure.finalAction ?? '',
       finalClosureAmount: closure.finalAmount ?? '',
+      finalClosureRoundedAmount: closure.finalAmountRounded ?? '',
+      finalClosureRoundingAdjustment: closure.roundingAdjustment ?? '',
+      finalClosureExactAmount: closure.absoluteFinalAmount ?? '',
       finalClosureStatus: closure.completionStatus ?? '',
       finalClosurePoolRefund: closure.poolRefundShare ?? '',
       finalClosureSettlementAdjustment: closure.settlementAdjustment ?? ''

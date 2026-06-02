@@ -1172,6 +1172,23 @@ function money(value, currency = 'INR') {
   }).format(Number(value || 0));
 }
 
+function wholeMoney(value, currency = 'INR') {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(Number(value || 0));
+}
+
+function exactAmountNote(roundedValue, exactValue, currency = 'INR') {
+  const rounded = Number(roundedValue || 0);
+  const exact = Number(exactValue || 0);
+  if (Math.abs(rounded - exact) < 0.005) return null;
+  const adjustment = rounded - exact;
+  return `Exact ${money(exact, currency)} · Round-off ${adjustment >= 0 ? '+' : ''}${money(adjustment, currency)}`;
+}
+
 function statusBadge(status) {
   const styles = {
     attending: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
@@ -3270,7 +3287,7 @@ function FinalOutingClosure({ data, reload, setToast }) {
         method: 'POST',
         body: JSON.stringify({
           status,
-          amount: row.absoluteFinalAmount,
+          amount: row.absoluteFinalAmountRounded ?? row.absoluteFinalAmount,
           mode: form.mode || 'UPI',
           reference: form.reference || '',
           note: form.note || ''
@@ -3307,10 +3324,14 @@ function FinalOutingClosure({ data, reload, setToast }) {
       </div>
 
       <div className="mb-5 grid gap-3 md:grid-cols-4">
-        <StatCard label="Remaining pool" value={money(closure.currentPoolBalance || 0, currency)} helper="After collections, pool expenses, refunds, and reimbursements" danger={Number(closure.currentPoolBalance || 0) < 0} />
-        <StatCard label="Refund due" value={money(closure.totalRefundDue || 0, currency)} helper="Total to give back" />
-        <StatCard label="Still to collect" value={money(closure.totalCollectDue || 0, currency)} helper="After settlement and collection adjustment" danger={Number(closure.totalCollectDue || 0) > 0} />
+        <StatCard label="Remaining pool" value={wholeMoney(closure.currentPoolBalance || 0, currency)} helper={`Exact ${money(closure.currentPoolBalance || 0, currency)} · after collections, pool expenses, refunds, and reimbursements`} danger={Number(closure.currentPoolBalance || 0) < 0} />
+        <StatCard label="Refund due" value={wholeMoney(closure.totalRefundDueRounded ?? closure.totalRefundDue ?? 0, currency)} helper={`Exact ${money(closure.totalRefundDue || 0, currency)} · round-off ${money(closure.totalRefundRoundingAdjustment || 0, currency)}`} />
+        <StatCard label="Still to collect" value={wholeMoney(closure.totalCollectDueRounded ?? closure.totalCollectDue ?? 0, currency)} helper={`Exact ${money(closure.totalCollectDue || 0, currency)} · round-off ${money(closure.totalCollectRoundingAdjustment || 0, currency)}`} danger={Number(closure.totalCollectDue || 0) > 0} />
         <StatCard label="Closure progress" value={`${closure.completedCount || 0}/${closure.rows?.length || 0}`} helper={`${closure.pendingCount || 0} pending`} />
+      </div>
+
+      <div className="mb-5 rounded-2xl border border-sky-100 bg-sky-50/80 p-4 text-sm text-slate-700">
+        Closure payouts are rounded to whole rupees for actual cash/UPI payment. Exact non-rounded values and round-off adjustments are shown under each amount so the financier can tally the difference instead of silently paying it from their own pocket.
       </div>
 
       {canManageClosure && (
@@ -3345,19 +3366,22 @@ function FinalOutingClosure({ data, reload, setToast }) {
               return (
                 <tr key={row.participantId} className="border-t border-slate-100 align-top">
                   <td className="p-3 font-bold text-slate-900">{row.name}</td>
-                  <td className="p-3">{money(row.paidToPool, currency)}</td>
+                  <td className="p-3">{wholeMoney(row.paidToPool, currency)}<div className="text-xs text-slate-500">Exact {money(row.paidToPool, currency)}</div></td>
                   <td className="p-3">
-                    <div className="font-bold text-emerald-700">{money(row.poolRefundShare, currency)}</div>
-                    {Number(row.poolDeficitShare || 0) > 0 && <div className="text-xs text-rose-600">Deficit share {money(row.poolDeficitShare, currency)}</div>}
+                    <div className="font-bold text-emerald-700">{wholeMoney(row.poolRefundShareRounded ?? row.poolRefundShare, currency)}</div>
+                    {exactAmountNote(row.poolRefundShareRounded ?? row.poolRefundShare, row.poolRefundShare, currency) && <div className="text-xs text-slate-500">{exactAmountNote(row.poolRefundShareRounded ?? row.poolRefundShare, row.poolRefundShare, currency)}</div>}
+                    {Number(row.poolDeficitShare || 0) > 0 && <div className="text-xs text-rose-600">Deficit share {wholeMoney(row.poolDeficitShareRounded ?? row.poolDeficitShare, currency)} · exact {money(row.poolDeficitShare, currency)}</div>}
                   </td>
                   <td className="p-3">
-                    <div className={Number(row.settlementAdjustment || 0) >= 0 ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>{money(row.settlementAdjustment, currency)}</div>
+                    <div className={Number(row.settlementAdjustment || 0) >= 0 ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>{wholeMoney(row.settlementAdjustmentRounded ?? row.settlementAdjustment, currency)}</div>
+                    {exactAmountNote(row.settlementAdjustmentRounded ?? row.settlementAdjustment, row.settlementAdjustment, currency) && <div className="text-xs text-slate-500">{exactAmountNote(row.settlementAdjustmentRounded ?? row.settlementAdjustment, row.settlementAdjustment, currency)}</div>}
                     <div className="text-xs text-slate-500">Receivable {money(row.settlementReceivable, currency)} · Payable {money(row.settlementPayable, currency)}</div>
                   </td>
-                  <td className="p-3 font-bold text-rose-700">{money(row.pendingCollection, currency)}</td>
+                  <td className="p-3 font-bold text-rose-700">{wholeMoney(row.pendingCollectionRounded ?? row.pendingCollection, currency)}<div className="text-xs font-normal text-slate-500">Exact {money(row.pendingCollection, currency)}</div></td>
                   <td className="p-3">
-                    <div className={row.finalAmount >= 0 ? 'font-black text-emerald-700' : 'font-black text-rose-700'}>{money(Math.abs(row.finalAmount), currency)}</div>
+                    <div className={row.finalAmount >= 0 ? 'font-black text-emerald-700' : 'font-black text-rose-700'}>{wholeMoney(row.absoluteFinalAmountRounded ?? Math.abs(row.finalAmount), currency)}</div>
                     <div className="text-xs text-slate-500">{finalClosureActionLabel(row.finalAction)}</div>
+                    {exactAmountNote(row.absoluteFinalAmountRounded ?? Math.abs(row.finalAmount), Math.abs(row.finalAmount), currency) && <div className="text-xs text-slate-500">{exactAmountNote(row.absoluteFinalAmountRounded ?? Math.abs(row.finalAmount), Math.abs(row.finalAmount), currency)}</div>}
                   </td>
                   <td className="p-3"><span className={statusBadge(row.completionStatus)}>{finalClosureStatusLabel(row.completionStatus)}</span>{row.reference && <div className="mt-1 text-xs text-slate-500">Ref: {row.reference}</div>}</td>
                   {canManageClosure && (
