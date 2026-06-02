@@ -10,7 +10,6 @@ import {
   calculateDashboard,
   calculateBudgetCollections,
   calculateFundPool,
-  calculateFinalClosure,
   calculatePlannedBudget,
   roundCollectionAmount,
   generateSettlementPlan,
@@ -115,7 +114,6 @@ function buildEventRecord(input = {}) {
     settlements: Array.isArray(input.settlements) ? input.settlements : [],
     budgetCollections: Array.isArray(input.budgetCollections) ? input.budgetCollections : [],
     fundTransactions: Array.isArray(input.fundTransactions) ? input.fundTransactions : [],
-    finalClosure: input.finalClosure && typeof input.finalClosure === 'object' ? input.finalClosure : { status: 'draft', calculatedAt: null, records: [] },
     notifications: Array.isArray(input.notifications) ? input.notifications : [],
     auditLog: Array.isArray(input.auditLog) ? input.auditLog : Array.isArray(input.audit) ? input.audit : []
   };
@@ -133,7 +131,6 @@ function normalizeMultiEventStore(data) {
       settlements: data.settlements || [],
       budgetCollections: data.budgetCollections || [],
       fundTransactions: data.fundTransactions || [],
-      finalClosure: data.finalClosure || {},
       notifications: data.notifications || []
     });
     syncEventBudgetFromCategories(legacyRecord);
@@ -1386,6 +1383,32 @@ function assertMemberExpenseParticipant(eventRecord, user, expense) {
   }
 }
 
+function poolExpenseWillAffectBalance(expense = {}) {
+  return expense.paymentSource === 'pool' && expense.approvalStatus !== 'rejected';
+}
+
+function assertPoolExpenseWithinBalance(eventRecord, expense, existingExpense = null) {
+  if (!poolExpenseWillAffectBalance(expense)) return;
+
+  const currentPoolBalance = Number(calculateFundPool(eventRecord).currentBalance || 0);
+  const editablePoolCredit = poolExpenseWillAffectBalance(existingExpense || {})
+    ? Number(existingExpense.amount || 0)
+    : 0;
+  const availablePoolBalance = roundMoney(currentPoolBalance + editablePoolCredit);
+  const expenseAmount = roundMoney(Number(expense.amount || 0));
+
+  if (expenseAmount > availablePoolBalance + 0.009) {
+    const error = new Error(`This expense is above the shared pool threshold. Available pool balance is ${serverMoney(availablePoolBalance, eventRecord.event?.currency || 'INR')}. Collect more money or reduce the expense amount before saving.`);
+    error.statusCode = 400;
+    error.details = {
+      availablePoolBalance,
+      expenseAmount,
+      thresholdExceededBy: roundMoney(expenseAmount - availablePoolBalance)
+    };
+    throw error;
+  }
+}
+
 
 async function authEmailExists(email, options = {}) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -1960,7 +1983,6 @@ app.get('/api/bootstrap', asyncHandler(async (req, res) => {
   const calculateStartedAt = process.hrtime.bigint();
   const dashboard = calculateDashboard(activeEvent);
   const settlementPlan = noAssignedEvent ? { settlements: [], allSettled: false, participantBalances: [] } : syncSettlements(activeEvent);
-  const finalClosure = noAssignedEvent ? { rows: [], totalRefundDue: 0, totalCollectDue: 0, currentPoolBalance: 0, pendingCount: 0, completedCount: 0 } : calculateFinalClosure(activeEvent);
   const eventList = visibleEventsForUser(data, currentUser).map(eventSummary);
   mark('calculateMs', calculateStartedAt);
 
@@ -1979,8 +2001,7 @@ app.get('/api/bootstrap', asyncHandler(async (req, res) => {
     users: ensureUsers(data).map(publicUser),
     invitations: ['admin', 'finance'].includes(currentUser.role) ? ensureInvitations(data).map((invite) => publicInvitation(invite, data)) : [],
     dashboard,
-    settlementPlan,
-    finalClosure
+    settlementPlan
   };
   mark('responseBuildMs', responseStartedAt);
   timings.totalMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
@@ -2642,6 +2663,7 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
 
   validateExpensePayload(expense);
   if (expense.paymentSource === 'pool') requireRole(currentUser, ['admin', 'finance']);
+  assertPoolExpenseWithinBalance(activeEvent, expense);
   assertMemberExpenseParticipant(activeEvent, currentUser, expense);
   activeEvent.expenses.push(expense);
   addAuditLog(activeEvent, currentUser, 'expense.created', 'expense', `Created expense ${expense.title}.`, {
@@ -2706,6 +2728,7 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
 
   validateExpensePayload(nextExpense);
   if (nextExpense.paymentSource === 'pool') requireRole(currentUser, ['admin', 'finance']);
+  assertPoolExpenseWithinBalance(activeEvent, nextExpense, beforeExpense);
   assertMemberExpenseParticipant(activeEvent, currentUser, nextExpense);
   Object.assign(expense, nextExpense);
   addAuditLog(activeEvent, currentUser, req.body.approvalStatus && req.body.approvalStatus !== beforeExpense.approvalStatus ? 'expense.approval_updated' : 'expense.updated', 'expense', `Updated expense ${expense.title}.`, {
@@ -2781,133 +2804,6 @@ app.get('/api/dashboard', asyncHandler(async (req, res) => {
   const activeEvent = getEventRecordForUser(data, currentUser);
   await writeStore(data);
   res.json(calculateDashboard(activeEvent));
-}));
-
-
-app.get('/api/final-closure', asyncHandler(async (req, res) => {
-  const data = await readStore();
-  normalizeMultiEventStore(data);
-  const currentUser = resolveAppUser(data, req.authUser);
-  const activeEvent = getEventRecordForUser(data, currentUser);
-  syncSettlements(activeEvent);
-  await writeStoreIfDirty(data);
-  res.json(calculateFinalClosure(activeEvent));
-}));
-
-app.post('/api/final-closure/calculate', asyncHandler(async (req, res) => {
-  const data = await readStore();
-  normalizeMultiEventStore(data);
-  const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin', 'finance']);
-  const activeEvent = getActiveEventRecord(data);
-  syncSettlements(activeEvent);
-  const now = new Date().toISOString();
-  const existing = activeEvent.finalClosure && typeof activeEvent.finalClosure === 'object' ? activeEvent.finalClosure : {};
-  activeEvent.finalClosure = {
-    status: 'calculated',
-    calculatedAt: now,
-    updatedAt: now,
-    records: Array.isArray(existing.records) ? existing.records : []
-  };
-  const closure = calculateFinalClosure(activeEvent);
-  addAuditLog(activeEvent, currentUser, 'closure.calculated', 'closure', 'Calculated final pool closure and refund adjustments.', {
-    currentPoolBalance: closure.currentPoolBalance,
-    totalRefundDue: closure.totalRefundDue,
-    totalCollectDue: closure.totalCollectDue,
-    pendingCount: closure.pendingCount
-  });
-  await writeStore(data);
-  res.status(201).json(calculateFinalClosure(activeEvent));
-}));
-
-app.post('/api/final-closure/:participantId/mark', asyncHandler(async (req, res) => {
-  const data = await readStore();
-  normalizeMultiEventStore(data);
-  const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin', 'finance']);
-  const activeEvent = getActiveEventRecord(data);
-  const participant = requireExistingItem(findById(activeEvent.participants, req.params.participantId), 'Participant');
-  syncSettlements(activeEvent);
-  const closure = calculateFinalClosure(activeEvent);
-  const row = requireExistingItem((closure.rows || []).find((item) => item.participantId === participant.id), 'Final closure row');
-  if (row.finalAction === 'settled') {
-    return res.status(400).json({ error: 'This participant is already settled in final closure.' });
-  }
-
-  const requestedStatus = req.body.status || 'completed';
-  if (!['completed', 'pending', 'waived'].includes(requestedStatus)) {
-    return res.status(400).json({ error: 'Final closure status must be completed, pending, or waived.' });
-  }
-
-  const now = new Date().toISOString();
-  activeEvent.finalClosure = activeEvent.finalClosure && typeof activeEvent.finalClosure === 'object'
-    ? activeEvent.finalClosure
-    : { status: 'calculated', calculatedAt: now, records: [] };
-  activeEvent.finalClosure.records = Array.isArray(activeEvent.finalClosure.records) ? activeEvent.finalClosure.records : [];
-  activeEvent.finalClosure.updatedAt = now;
-
-  activeEvent.finalClosure.records = activeEvent.finalClosure.records.filter((record) => record.participantId !== participant.id);
-  if (requestedStatus !== 'pending') {
-    const amount = roundMoney(Number(req.body.amount ?? row.absoluteFinalAmount));
-    activeEvent.finalClosure.records.push({
-      participantId: participant.id,
-      status: requestedStatus,
-      amount: Number.isFinite(amount) && amount >= 0 ? amount : row.absoluteFinalAmount,
-      mode: sanitizeObject(req.body).mode || 'UPI',
-      reference: sanitizeObject(req.body).reference || '',
-      note: sanitizeObject(req.body).note || '',
-      closedAt: req.body.closedAt || now,
-      updatedAt: now
-    });
-  }
-
-  const updatedClosure = calculateFinalClosure(activeEvent);
-  activeEvent.finalClosure.status = updatedClosure.allClosed ? 'closed' : 'calculated';
-
-  const action = requestedStatus === 'pending'
-    ? 'closure.reopened'
-    : requestedStatus === 'waived'
-      ? 'closure.waived'
-      : row.finalAction === 'refund-due'
-        ? 'closure.refund_marked_paid'
-        : 'closure.amount_collected';
-  const description = requestedStatus === 'pending'
-    ? `Reopened final closure item for ${participant.name}.`
-    : requestedStatus === 'waived'
-      ? `Waived final closure item for ${participant.name}.`
-      : row.finalAction === 'refund-due'
-        ? `Marked final refund paid to ${participant.name}.`
-        : `Marked final amount collected from ${participant.name}.`;
-
-  addAuditLog(activeEvent, currentUser, action, 'closure', description, {
-    participantId: participant.id,
-    participantName: participant.name,
-    finalAction: row.finalAction,
-    finalAmount: row.finalAmount,
-    amount: row.absoluteFinalAmount,
-    mode: sanitizeObject(req.body).mode || 'UPI',
-    reference: sanitizeObject(req.body).reference || ''
-  });
-  await writeStore(data);
-  res.json(calculateFinalClosure(activeEvent));
-}));
-
-app.post('/api/final-closure/reopen', asyncHandler(async (req, res) => {
-  const data = await readStore();
-  normalizeMultiEventStore(data);
-  const currentUser = resolveAppUser(data, req.authUser);
-  requireRole(currentUser, ['admin', 'finance']);
-  const activeEvent = getActiveEventRecord(data);
-  const now = new Date().toISOString();
-  activeEvent.finalClosure = {
-    status: 'calculated',
-    calculatedAt: activeEvent.finalClosure?.calculatedAt || now,
-    updatedAt: now,
-    records: []
-  };
-  addAuditLog(activeEvent, currentUser, 'closure.reopened', 'closure', 'Reopened final outing closure records.', {});
-  await writeStore(data);
-  res.json(calculateFinalClosure(activeEvent));
 }));
 
 app.get('/api/settlements', asyncHandler(async (req, res) => {
@@ -3515,24 +3411,6 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     ], report.fundPool.ledger || [], { emptyText: 'No fund ledger entries available.', fontSize: 7.5 });
   }
 
-  if (report.finalClosure) {
-    drawPdfSection(doc, 'Final pool closure');
-    drawKeyValueGrid(doc, [
-      { label: 'Remaining pool', value: serverMoney(report.finalClosure.currentPoolBalance, currency), danger: Number(report.finalClosure.currentPoolBalance || 0) < 0 },
-      { label: 'Refund due', value: serverMoney(report.finalClosure.totalRefundDue, currency) },
-      { label: 'Still to collect', value: serverMoney(report.finalClosure.totalCollectDue, currency), danger: Number(report.finalClosure.totalCollectDue || 0) > 0 },
-      { label: 'Closure progress', value: `${report.finalClosure.completedCount || 0}/${(report.finalClosure.rows || []).length || 0}` }
-    ], currency);
-    drawSimpleTable(doc, [
-      { label: 'Participant', key: 'name', weight: 1.5 },
-      { label: 'Pool refund', value: (row) => serverMoney(row.poolRefundShare, currency), weight: 1 },
-      { label: 'Settlement adj.', value: (row) => serverMoney(row.settlementAdjustment, currency), weight: 1 },
-      { label: 'Pending collect.', value: (row) => serverMoney(row.pendingCollection, currency), weight: 1 },
-      { label: 'Final', value: (row) => `${row.finalAction === 'collect-due' ? 'Collect ' : row.finalAction === 'refund-due' ? 'Refund ' : ''}${serverMoney(Math.abs(row.finalAmount || 0), currency)}`, weight: 1.2 },
-      { label: 'Status', value: (row) => pdfStatusLabel(row.completionStatus), weight: 1 }
-    ], report.finalClosure.rows || [], { emptyText: 'No final closure calculation available.', fontSize: 7.3 });
-  }
-
   drawPdfSection(doc, 'Category-wise expenses');
   drawSimpleTable(doc, [
     { label: 'Category', key: 'name', weight: 2 },
@@ -3649,10 +3527,7 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
       fundPoolBalance: report.fundPool?.currentBalance ?? '',
       fundPoolCollected: report.fundPool?.collectedTotal ?? '',
       fundPoolSpent: report.fundPool?.poolExpenseTotal ?? '',
-      fundPoolReimbursed: report.fundPool?.reimbursementTotal ?? '',
-      finalClosureAction: (report.finalClosure?.rows || []).find((row) => row.participantId === participant.participantId)?.finalAction ?? '',
-      finalClosureAmount: (report.finalClosure?.rows || []).find((row) => row.participantId === participant.participantId)?.finalAmount ?? '',
-      finalClosureStatus: (report.finalClosure?.rows || []).find((row) => row.participantId === participant.participantId)?.completionStatus ?? ''
+      fundPoolReimbursed: report.fundPool?.reimbursementTotal ?? ''
     };
   });
 

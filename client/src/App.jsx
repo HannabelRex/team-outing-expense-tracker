@@ -1144,6 +1144,10 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
   );
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
 function money(value, currency = 'INR') {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -1167,10 +1171,7 @@ function statusBadge(status) {
     'partially-collected': 'bg-blue-50 text-blue-700 ring-blue-200',
     collected: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
     'over-collected': 'bg-purple-50 text-purple-700 ring-purple-200',
-    settled: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    'refund-paid': 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    'amount-collected': 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-    waived: 'bg-slate-100 text-slate-700 ring-slate-200'
+    settled: 'bg-emerald-50 text-emerald-700 ring-emerald-200'
   };
 
   return `inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles[status] || 'bg-slate-100 text-slate-700 ring-slate-200'}`;
@@ -2492,6 +2493,20 @@ function Expenses({ data, reload, setToast, isOnline }) {
   const currency = data.event.currency;
   const financierParticipant = data.participants.find((participant) => participant.id === data.event?.financierParticipantId);
   const financierName = financierParticipant?.name || '';
+  const editingExpense = useMemo(() => data.expenses.find((expense) => expense.id === editingExpenseId) || null, [data.expenses, editingExpenseId]);
+  const rawPoolBalance = Number(data.dashboard?.fundPool?.currentBalance || 0);
+  const editablePoolCredit = editingExpense?.paymentSource === 'pool' && editingExpense?.approvalStatus !== 'rejected'
+    ? Number(editingExpense.amount || 0)
+    : 0;
+  const availablePoolBalance = Math.max(0, roundMoney(rawPoolBalance + editablePoolCredit));
+  const enteredPoolAmount = Number(form.amount || 0);
+  const remainingPoolAfterExpense = form.paymentSource === 'pool'
+    ? roundMoney(availablePoolBalance - (Number.isFinite(enteredPoolAmount) ? enteredPoolAmount : 0))
+    : availablePoolBalance;
+  const poolExpenseExceedsBalance = form.paymentSource === 'pool'
+    && form.approvalStatus !== 'rejected'
+    && Number.isFinite(enteredPoolAmount)
+    && enteredPoolAmount > availablePoolBalance + 0.009;
 
   const expenseRows = useMemo(() => {
     const categoryMap = new Map(data.categories.map((category) => [category.id, category.name]));
@@ -2764,6 +2779,9 @@ function Expenses({ data, reload, setToast, isOnline }) {
       if (payload.paymentSource === 'pool' && !data.event?.financierParticipantId) {
         throw new Error('Set the common pool handler/financier in Event setup before recording an expense from the team fund pool.');
       }
+      if (payload.paymentSource === 'pool' && payload.approvalStatus !== 'rejected' && Number(payload.amount || 0) > availablePoolBalance + 0.009) {
+        throw new Error(`This expense is above the shared pool threshold. Available pool balance is ${money(availablePoolBalance, currency)}.`);
+      }
       if (!isOnline) {
         if (editingExpenseId) {
           throw new Error('Offline editing is blocked. Create a new offline draft or reconnect before changing existing expenses.');
@@ -2834,7 +2852,19 @@ function Expenses({ data, reload, setToast, isOnline }) {
             <label className="field-label">Paid by<select className="input" value={form.paidByParticipantId} onChange={(e) => setForm({ ...form, paidByParticipantId: e.target.value })} required>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
           )}
           <label className="field-label">Payment method<select className="input" value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}><option>UPI</option><option>Card</option><option>Cash</option><option>Bank transfer</option><option>Corporate card</option></select></label>
-          {form.paymentSource === 'pool' && <div className="lg:col-span-3 rounded-2xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200">This expense will reduce the collected team fund pool, will be handled by the Event setup financier, and will not create participant split shares because contributions were already collected upfront.</div>}
+          {form.paymentSource === 'pool' && (
+            <div className={`lg:col-span-3 rounded-2xl p-4 text-sm font-semibold ring-1 ${poolExpenseExceedsBalance ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-emerald-50 text-emerald-800 ring-emerald-200'}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p>This expense will reduce the collected team fund pool, will be handled by the Event setup financier, and will not create participant split shares because contributions were already collected upfront.</p>
+                <div className="rounded-2xl bg-white/80 px-4 py-2 text-right ring-1 ring-white/70">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Available pool</p>
+                  <p className="text-lg font-black text-slate-950">{money(availablePoolBalance, currency)}</p>
+                  {form.amount && <p className={`text-xs ${remainingPoolAfterExpense < 0 ? 'text-rose-700' : 'text-slate-500'}`}>After this: {money(remainingPoolAfterExpense, currency)}</p>}
+                </div>
+              </div>
+              {poolExpenseExceedsBalance && <p className="mt-3 rounded-2xl bg-white p-3 text-rose-700 ring-1 ring-rose-100">This expense is above the shared pool threshold. Reduce the amount or collect more money before saving it.</p>}
+            </div>
+          )}
           {form.paymentSource !== 'pool' && <label className="field-label">Split method<select className="input" value={form.splitMethod} onChange={(e) => setForm({ ...form, splitMethod: e.target.value })}><option value="equal">Equal among selected</option><option value="selected">Selected participants</option><option value="custom">Custom amount</option><option value="percentage">Percentage</option></select></label>}
 
           <div className="field-label">
@@ -2890,7 +2920,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
 
           <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.isRecurring} onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })} /> Recurring/shared expense</label>
-          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {!isOnline && !editingExpenseId ? 'Save offline draft' : editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
+          <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy || poolExpenseExceedsBalance}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {!isOnline && !editingExpenseId ? 'Save offline draft' : editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
         </form>
       </Section>
 
@@ -3044,8 +3074,7 @@ function Settlements({ data, reload, setToast }) {
   }
 
   return (
-    <div className="space-y-6">
-      <Section title="Settlement tracking" icon={CheckCircle2}>
+    <Section title="Settlement tracking" icon={CheckCircle2}>
       {settlements.length === 0 ? (
         <EmptyState title="No settlements needed" body="Balances are already clean. Suspiciously peaceful." />
       ) : (
@@ -3114,206 +3143,6 @@ function Settlements({ data, reload, setToast }) {
           )}
         </div>
       )}
-      </Section>
-      <FinalOutingClosure data={data} reload={reload} setToast={setToast} />
-    </div>
-  );
-}
-
-function finalClosureActionLabel(action) {
-  const labels = {
-    'refund-due': 'Refund to participant',
-    'collect-due': 'Collect from participant',
-    settled: 'Settled'
-  };
-  return labels[action] || action || 'Unknown';
-}
-
-function finalClosureStatusLabel(status) {
-  const labels = {
-    pending: 'Pending',
-    'refund-paid': 'Refund paid',
-    'amount-collected': 'Amount collected',
-    waived: 'Waived',
-    settled: 'Settled'
-  };
-  return labels[status] || status || 'Pending';
-}
-
-function FinalOutingClosure({ data, reload, setToast }) {
-  const currency = data.event.currency;
-  const closure = data.finalClosure || {
-    rows: [],
-    currentPoolBalance: 0,
-    totalRefundDue: 0,
-    totalCollectDue: 0,
-    pendingCount: 0,
-    completedCount: 0
-  };
-  const canManageClosure = ['admin', 'finance'].includes(data.currentUser?.role);
-  const [busy, setBusy] = useState(false);
-  const [forms, setForms] = useState({});
-
-  function updateForm(participantId, patch) {
-    setForms((current) => ({
-      ...current,
-      [participantId]: {
-        mode: 'UPI',
-        reference: '',
-        note: '',
-        ...(current[participantId] || {}),
-        ...patch
-      }
-    }));
-  }
-
-  async function calculateClosure() {
-    if (!canManageClosure) {
-      setToast('Final closure is read-only for members. Ask Admin or Finance to close the outing.');
-      return;
-    }
-    setBusy(true);
-    try {
-      await api('/final-closure/calculate', { method: 'POST' });
-      setToast('Final pool closure calculated. The money can now stop wandering around.');
-      await reload();
-    } catch (err) {
-      showActionError(setToast, err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function markClosure(row, status = 'completed') {
-    if (!canManageClosure) return;
-    const form = forms[row.participantId] || {};
-    const verb = status === 'pending' ? 'reopen this final closure item' : row.finalAction === 'refund-due' ? 'mark this refund as paid' : 'mark this amount as collected';
-    if (!window.confirm(`Confirm you want to ${verb}?`)) return;
-    setBusy(true);
-    try {
-      await api(`/final-closure/${row.participantId}/mark`, {
-        method: 'POST',
-        body: JSON.stringify({
-          status,
-          amount: row.absoluteFinalAmount,
-          mode: form.mode || 'UPI',
-          reference: form.reference || '',
-          note: form.note || ''
-        })
-      });
-      setToast(status === 'pending' ? 'Final closure item reopened.' : row.finalAction === 'refund-due' ? 'Final refund marked as paid.' : 'Final amount marked as collected.');
-      await reload();
-    } catch (err) {
-      showActionError(setToast, err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function reopenAll() {
-    if (!canManageClosure) return;
-    if (!window.confirm('Reopen all final closure records? This does not delete expenses or collections.')) return;
-    setBusy(true);
-    try {
-      await api('/final-closure/reopen', { method: 'POST' });
-      setToast('Final closure records reopened. Because someone always remembers one bill late.');
-      await reload();
-    } catch (err) {
-      showActionError(setToast, err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Section title="Final pool closure" icon={WalletCards}>
-      <div className="mb-5 rounded-2xl border border-amber-100 bg-amber-50/80 p-4 text-sm text-slate-700">
-        Use this after the outing is done. The app distributes the remaining team fund pool back to participants, adjusts pending settlements, subtracts pending collection, and shows the final amount to refund or collect.
-      </div>
-
-      <div className="mb-5 grid gap-3 md:grid-cols-4">
-        <StatCard label="Remaining pool" value={money(closure.currentPoolBalance || 0, currency)} helper="After collections, pool expenses, refunds, and reimbursements" danger={Number(closure.currentPoolBalance || 0) < 0} />
-        <StatCard label="Refund due" value={money(closure.totalRefundDue || 0, currency)} helper="Total to give back" />
-        <StatCard label="Still to collect" value={money(closure.totalCollectDue || 0, currency)} helper="After settlement and collection adjustment" danger={Number(closure.totalCollectDue || 0) > 0} />
-        <StatCard label="Closure progress" value={`${closure.completedCount || 0}/${closure.rows?.length || 0}`} helper={`${closure.pendingCount || 0} pending`} />
-      </div>
-
-      {canManageClosure && (
-        <div className="mb-5 flex flex-wrap gap-2">
-          <button className="btn-primary" type="button" disabled={busy} onClick={calculateClosure}><RefreshCw size={16} /> Calculate final closure</button>
-          {(closure.rows || []).some((row) => ['refund-paid', 'amount-collected', 'waived'].includes(row.completionStatus)) && (
-            <button className="btn-ghost" type="button" disabled={busy} onClick={reopenAll}>Reopen closure records</button>
-          )}
-        </div>
-      )}
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="text-slate-500">
-            <tr>
-              <th className="p-3">Participant</th>
-              <th className="p-3">Pool paid</th>
-              <th className="p-3">Pool refund</th>
-              <th className="p-3">Settlement adjustment</th>
-              <th className="p-3">Pending collection</th>
-              <th className="p-3">Final result</th>
-              <th className="p-3">Status</th>
-              {canManageClosure && <th className="p-3">Close item</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {(closure.rows || []).length === 0 ? (
-              <tr><td colSpan={canManageClosure ? 8 : 7} className="p-6 text-center text-slate-500">Calculate final closure when the outing is done. The table will show refunds, collections, and settlement adjustments.</td></tr>
-            ) : (closure.rows || []).map((row) => {
-              const form = forms[row.participantId] || { mode: 'UPI', reference: '', note: '' };
-              const isClosed = ['refund-paid', 'amount-collected', 'waived', 'settled'].includes(row.completionStatus);
-              return (
-                <tr key={row.participantId} className="border-t border-slate-100 align-top">
-                  <td className="p-3 font-bold text-slate-900">{row.name}</td>
-                  <td className="p-3">{money(row.paidToPool, currency)}</td>
-                  <td className="p-3">
-                    <div className="font-bold text-emerald-700">{money(row.poolRefundShare, currency)}</div>
-                    {Number(row.poolDeficitShare || 0) > 0 && <div className="text-xs text-rose-600">Deficit share {money(row.poolDeficitShare, currency)}</div>}
-                  </td>
-                  <td className="p-3">
-                    <div className={Number(row.settlementAdjustment || 0) >= 0 ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>{money(row.settlementAdjustment, currency)}</div>
-                    <div className="text-xs text-slate-500">Receivable {money(row.settlementReceivable, currency)} · Payable {money(row.settlementPayable, currency)}</div>
-                  </td>
-                  <td className="p-3 font-bold text-rose-700">{money(row.pendingCollection, currency)}</td>
-                  <td className="p-3">
-                    <div className={row.finalAmount >= 0 ? 'font-black text-emerald-700' : 'font-black text-rose-700'}>{money(Math.abs(row.finalAmount), currency)}</div>
-                    <div className="text-xs text-slate-500">{finalClosureActionLabel(row.finalAction)}</div>
-                  </td>
-                  <td className="p-3"><span className={statusBadge(row.completionStatus)}>{finalClosureStatusLabel(row.completionStatus)}</span>{row.reference && <div className="mt-1 text-xs text-slate-500">Ref: {row.reference}</div>}</td>
-                  {canManageClosure && (
-                    <td className="p-3 min-w-[260px]">
-                      {row.finalAction === 'settled' ? (
-                        <span className="text-xs font-bold text-emerald-700">No action needed</span>
-                      ) : isClosed ? (
-                        <button className="btn-ghost" type="button" disabled={busy} onClick={() => markClosure(row, 'pending')}>Reopen</button>
-                      ) : (
-                        <div className="space-y-2">
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <select className="input" value={form.mode} onChange={(e) => updateForm(row.participantId, { mode: e.target.value })}>
-                              <option>UPI</option>
-                              <option>Cash</option>
-                              <option>Bank transfer</option>
-                              <option>Card</option>
-                              <option>Other</option>
-                            </select>
-                            <input className="input" value={form.reference} onChange={(e) => updateForm(row.participantId, { reference: e.target.value })} placeholder="Reference / note" />
-                          </div>
-                          <button className="btn-primary w-full" type="button" disabled={busy} onClick={() => markClosure(row, 'completed')}>{row.finalAction === 'refund-due' ? 'Mark refund paid' : 'Mark collected'}</button>
-                        </div>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
     </Section>
   );
 }
