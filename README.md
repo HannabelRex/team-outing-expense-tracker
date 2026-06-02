@@ -555,3 +555,7 @@ Restored the Phase 20 Final Pool Closure section under Settlements and the relat
 ### Final Closure Whole-Rupee Rounding Hotfix
 
 Final pool closure now shows whole-rupee rounded amounts for actual refunds/collections while preserving exact non-rounded values and round-off adjustments for reconciliation. Example: `₹111.54` is payable as `₹112`, while `₹111.39` is payable as `₹111`.
+
+### PDF Report Layout Hotfix
+
+The generated PDF report now uses a landscape A4 layout with compact summary cards and safer table pagination. This removes the blank pages that appeared in the Team Fund Pool section and gives wide tables such as Final Pool Closure more room for rounded/exact closure amounts. Event/report text is also sanitized to avoid broken glyphs when unsupported emoji are present in event names.

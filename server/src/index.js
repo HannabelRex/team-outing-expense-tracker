@@ -3402,6 +3402,14 @@ function serverMoney(value, currency = 'INR') {
   return `${currencyCode} ${formattedAmount}`;
 }
 
+function sanitizePdfText(value, fallback = '-') {
+  const normalized = String(value ?? fallback)
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized || fallback;
+}
 
 function formatClosureAmount(roundedValue, exactValue, currency = 'INR') {
   const rounded = Number(roundedValue ?? exactValue ?? 0);
@@ -3423,19 +3431,11 @@ function pdfStatusLabel(status) {
 }
 
 function drawPdfTitle(doc, title, subtitle) {
-  doc.fontSize(20).font('Helvetica-Bold').fillColor('#0f172a').text(title, { align: 'left' });
+  doc.fontSize(18).font('Helvetica-Bold').fillColor('#0f172a').text(sanitizePdfText(title), { align: 'left' });
   if (subtitle) {
-    doc.moveDown(0.25).fontSize(10).font('Helvetica').fillColor('#64748b').text(subtitle);
+    doc.moveDown(0.2).fontSize(9).font('Helvetica').fillColor('#64748b').text(sanitizePdfText(subtitle));
   }
-  doc.moveDown(0.8);
-}
-
-function drawPdfSection(doc, title) {
-  doc.moveDown(0.8);
-  doc.fontSize(13).font('Helvetica-Bold').fillColor('#0f172a').text(title);
-  doc.moveDown(0.35);
-  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#e2e8f0').stroke();
-  doc.moveDown(0.5);
+  doc.moveDown(0.55);
 }
 
 function ensurePdfSpace(doc, needed = 90) {
@@ -3444,69 +3444,93 @@ function ensurePdfSpace(doc, needed = 90) {
   }
 }
 
-function drawKeyValueGrid(doc, items, currency) {
-  const colWidth = 250;
-  const rowHeight = 42;
-  const startX = doc.page.margins.left;
-  let x = startX;
-  let y = doc.y;
+function drawPdfSection(doc, title, neededAfterTitle = 70) {
+  ensurePdfSpace(doc, 26 + neededAfterTitle);
+  doc.moveDown(0.55);
+  doc.fontSize(12).font('Helvetica-Bold').fillColor('#0f172a').text(sanitizePdfText(title));
+  doc.moveDown(0.25);
+  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#e2e8f0').stroke();
+  doc.moveDown(0.35);
+}
 
-  items.forEach((item, index) => {
+function drawKeyValueGrid(doc, items) {
+  if (!items?.length) return;
+  const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const gap = 10;
+  const columns = usableWidth >= 690 ? 4 : 2;
+  const rowHeight = 40;
+  const colWidth = (usableWidth - gap * (columns - 1)) / columns;
+  let index = 0;
+
+  while (index < items.length) {
+    const remaining = items.length - index;
+    const itemsThisRow = Math.min(columns, remaining);
     ensurePdfSpace(doc, rowHeight + 8);
-    x = startX + (index % 2) * (colWidth + 16);
-    if (index > 0 && index % 2 === 0) y += rowHeight + 10;
-    if (index % 2 === 0) doc.y = y;
-
-    doc.roundedRect(x, y, colWidth, rowHeight, 8).fillAndStroke('#f8fafc', '#e2e8f0');
-    doc.fillColor('#64748b').fontSize(8).font('Helvetica-Bold').text(item.label.toUpperCase(), x + 12, y + 9, { width: colWidth - 24 });
-    doc.fillColor(item.danger ? '#be123c' : '#0f172a').fontSize(12).font('Helvetica-Bold').text(item.value, x + 12, y + 22, { width: colWidth - 24 });
-  });
-
-  doc.y = y + rowHeight + 8;
+    const y = doc.y;
+    for (let col = 0; col < itemsThisRow; col += 1) {
+      const item = items[index + col];
+      const x = doc.page.margins.left + col * (colWidth + gap);
+      doc.roundedRect(x, y, colWidth, rowHeight, 8).fillAndStroke('#f8fafc', '#e2e8f0');
+      doc.fillColor('#64748b').fontSize(7).font('Helvetica-Bold').text(sanitizePdfText(item.label).toUpperCase(), x + 9, y + 8, { width: colWidth - 18, ellipsis: true });
+      doc.fillColor(item.danger ? '#be123c' : '#0f172a').fontSize(10.5).font('Helvetica-Bold').text(sanitizePdfText(item.value), x + 9, y + 21, { width: colWidth - 18, ellipsis: true });
+    }
+    doc.y = y + rowHeight + 8;
+    index += itemsThisRow;
+  }
 }
 
 function drawSimpleTable(doc, columns, rows, options = {}) {
-  const { emptyText = 'No rows available.', rowHeight = 22, fontSize = 8 } = options;
+  const { emptyText = 'No rows available.', rowHeight = 20, fontSize = 7.5, repeatHeader = true } = options;
   if (!rows.length) {
-    doc.fontSize(9).font('Helvetica').fillColor('#64748b').text(emptyText);
+    doc.fontSize(8).font('Helvetica').fillColor('#64748b').text(emptyText);
     return;
   }
 
   const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const totalWeight = columns.reduce((sum, column) => sum + (column.weight || 1), 0);
-  const widths = columns.map((column) => Math.floor((usableWidth * (column.weight || 1)) / totalWeight));
+  const widths = columns.map((column, index) => {
+    const raw = (usableWidth * (column.weight || 1)) / totalWeight;
+    if (index === columns.length - 1) {
+      const used = columns.slice(0, -1).reduce((sum, c, i) => sum + Math.floor((usableWidth * (c.weight || 1)) / totalWeight), 0);
+      return usableWidth - used;
+    }
+    return Math.floor(raw);
+  });
 
   function drawHeader() {
-    ensurePdfSpace(doc, rowHeight + 8);
     const y = doc.y;
     let x = doc.page.margins.left;
     doc.rect(x, y, usableWidth, rowHeight).fill('#0f172a');
     columns.forEach((column, index) => {
-      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(fontSize).text(column.label, x + 5, y + 7, { width: widths[index] - 10, ellipsis: true });
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(fontSize).text(sanitizePdfText(column.label), x + 5, y + 6, { width: widths[index] - 10, ellipsis: true });
       x += widths[index];
     });
     doc.y = y + rowHeight;
   }
 
+  ensurePdfSpace(doc, rowHeight * 2 + 8);
   drawHeader();
   rows.forEach((row, rowIndex) => {
-    ensurePdfSpace(doc, rowHeight + 8);
-    if (doc.y < 80) drawHeader();
+    if (doc.y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      if (repeatHeader) drawHeader();
+    }
     const y = doc.y;
     let x = doc.page.margins.left;
     if (rowIndex % 2 === 0) doc.rect(x, y, usableWidth, rowHeight).fill('#f8fafc');
     columns.forEach((column, index) => {
       const value = typeof column.value === 'function' ? column.value(row) : row[column.key];
-      doc.fillColor('#0f172a').font('Helvetica').fontSize(fontSize).text(String(value ?? ''), x + 5, y + 7, {
+      const color = column.color ? column.color(row, value) : '#0f172a';
+      doc.fillColor(color).font(column.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).text(sanitizePdfText(value), x + 5, y + 6, {
         width: widths[index] - 10,
-        height: rowHeight - 8,
+        height: rowHeight - 5,
         ellipsis: true
       });
       x += widths[index];
     });
     doc.y = y + rowHeight;
   });
-  doc.moveDown(0.4);
+  doc.moveDown(0.35);
 }
 
 function buildPdfReport(doc, activeEvent, report, generatedBy) {
@@ -3515,15 +3539,15 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
 
   drawPdfTitle(
     doc,
-    `${report.event.name} - Expense Report`,
+    `${sanitizePdfText(report.event.name)} - Expense Report`,
     `Generated ${generatedAt}${generatedBy?.email ? ` by ${generatedBy.email}` : ''}`
   );
 
   doc.fontSize(10).font('Helvetica').fillColor('#334155')
-    .text(`Date: ${report.event.date || 'N/A'}`)
-    .text(`Location: ${report.event.location || 'N/A'}`)
-    .text(`Organizer: ${report.event.organizer?.name || 'N/A'}${report.event.organizer?.email ? ` (${report.event.organizer.email})` : ''}`)
-    .text(`Event status: ${activeEvent.status || 'active'}`);
+    .text(`Date: ${sanitizePdfText(report.event.date || 'N/A')}`)
+    .text(`Location: ${sanitizePdfText(report.event.location || 'N/A')}`)
+    .text(`Organizer: ${sanitizePdfText(report.event.organizer?.name || 'N/A')}${report.event.organizer?.email ? ` (${sanitizePdfText(report.event.organizer.email)})` : ''}`)
+    .text(`Event status: ${sanitizePdfText(activeEvent.status || 'active')}`);
 
   drawPdfSection(doc, 'Financial summary');
   drawKeyValueGrid(doc, [
@@ -3595,14 +3619,14 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
 
   drawPdfSection(doc, 'Final pool closure');
   drawSimpleTable(doc, [
-    { label: 'Participant', key: 'name', weight: 1.6 },
+    { label: 'Participant', key: 'name', weight: 1.55, bold: true },
     { label: 'Pool paid', value: (row) => serverMoney(row.paidToPool, currency), weight: 1 },
-    { label: 'Pool refund', value: (row) => formatClosureAmount(row.poolRefundShareRounded, row.poolRefundShare, currency), weight: 1 },
-    { label: 'Settlement adj.', value: (row) => formatClosureAmount(row.settlementAdjustmentRounded, row.settlementAdjustment, currency), weight: 1 },
-    { label: 'Pending coll.', value: (row) => formatClosureAmount(row.pendingCollectionRounded, row.pendingCollection, currency), weight: 1 },
-    { label: 'Final', value: (row) => `${row.finalAction === 'collect-due' ? 'Collect ' : row.finalAction === 'refund-due' ? 'Refund ' : ''}${formatClosureAmount(row.absoluteFinalAmountRounded, row.absoluteFinalAmount, currency)}`, weight: 1.2 },
-    { label: 'Status', value: (row) => pdfStatusLabel(row.completionStatus), weight: 1 }
-  ], report.finalClosure?.rows || [], { emptyText: 'No final closure calculation available.', fontSize: 7.3 });
+    { label: 'Pool refund', value: (row) => formatClosureAmount(row.poolRefundShareRounded, row.poolRefundShare, currency), weight: 1.25 },
+    { label: 'Settle adj.', value: (row) => formatClosureAmount(row.settlementAdjustmentRounded, row.settlementAdjustment, currency), weight: 1.25 },
+    { label: 'Pending coll.', value: (row) => formatClosureAmount(row.pendingCollectionRounded, row.pendingCollection, currency), weight: 1.2 },
+    { label: 'Final result', value: (row) => `${row.finalAction === 'collect-due' ? 'Collect ' : row.finalAction === 'refund-due' ? 'Refund ' : 'Settled '}${formatClosureAmount(row.absoluteFinalAmountRounded, row.absoluteFinalAmount, currency)}`, weight: 1.45 },
+    { label: 'Status', value: (row) => pdfStatusLabel(row.completionStatus), weight: 0.85 }
+  ], report.finalClosure?.rows || [], { emptyText: 'No final closure calculation available.', fontSize: 6.5, rowHeight: 28 });
 
   drawPdfSection(doc, 'Expense list');
   const participantMap = new Map(activeEvent.participants.map((participant) => [participant.id, participant.name]));
@@ -3654,9 +3678,10 @@ app.get('/api/reports.pdf', asyncHandler(async (req, res) => {
 
   const doc = new PDFDocument({
     size: 'A4',
-    margin: 40,
+    layout: 'landscape',
+    margin: 32,
     info: {
-      Title: `${activeEvent.event.name} - Expense Report`,
+      Title: `${sanitizePdfText(activeEvent.event.name)} - Expense Report`,
       Author: 'Team Outing Expense Tracker',
       Subject: 'Team outing expense report'
     }
