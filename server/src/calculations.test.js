@@ -88,13 +88,13 @@ assert.equal(rawSettlementPlan.settlements[0].paidAmount, 20);
 
 
 const budgetCollectionData = {
-  event: { estimatedBudget: 9000 },
+  event: { estimatedBudget: 0 },
   participants: [
     { id: 'p1', name: 'A', emailOrPhone: 'a@test.com', attendanceStatus: 'attending' },
     { id: 'p2', name: 'B', emailOrPhone: 'b@test.com', attendanceStatus: 'attending' },
     { id: 'p3', name: 'C', emailOrPhone: 'c@test.com', attendanceStatus: 'attending' }
   ],
-  categories: [],
+  categories: [{ id: 'c-travel', name: 'Travel', estimatedCost: 9000 }],
   expenses: [],
   settlements: [],
   budgetCollections: [
@@ -111,6 +111,7 @@ const budgetCollectionData = {
 };
 
 const collectionSummary = calculateBudgetCollections(budgetCollectionData);
+assert.equal(collectionSummary.totalBudget, 9000);
 assert.equal(collectionSummary.suggestedPerParticipant, 3000);
 assert.equal(collectionSummary.expectedTotal, 10000);
 assert.equal(collectionSummary.collectedTotal, 1500);

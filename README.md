@@ -2,6 +2,14 @@
 
 This package upgrades the Team Outing Expense Tracker with offline receipt attachment support for expense drafts.
 
+### Budget Tab Authoritative Budget Hotfix
+
+- Event budget is now calculated from the Budget tab category estimates.
+- Manual Estimated budget fields were removed from Event setup and Create event.
+- Dashboard, Analytics, Budget Collection Tracker, Fund Pool, Events list, PDF reports, and CSV reports now use the Budget tab total.
+- Category create/edit/delete operations automatically resync the derived event budget.
+
+
 ## Phase 14 summary
 
 Phase 14 builds on Phase 13 Offline Expense Draft Queue. Users can now create offline expense drafts with receipt files attached. The app stores the draft metadata in `localStorage`, stores receipt files in IndexedDB, uploads the receipt during sync, and only deletes the local draft after the expense is saved successfully.

@@ -10,6 +10,7 @@ import {
   calculateDashboard,
   calculateBudgetCollections,
   calculateFundPool,
+  calculatePlannedBudget,
   generateSettlementPlan,
   toCsv,
   validateExpensePayload,
@@ -79,6 +80,14 @@ function defaultCategories() {
   ];
 }
 
+
+function syncEventBudgetFromCategories(eventRecord) {
+  if (!eventRecord?.event) return 0;
+  const plannedBudget = calculatePlannedBudget(eventRecord);
+  eventRecord.event.estimatedBudget = plannedBudget;
+  return plannedBudget;
+}
+
 function buildEventRecord(input = {}) {
   const event = input.event || input;
   const id = event.id || input.id || `evt-${nanoid(8)}`;
@@ -122,10 +131,15 @@ function normalizeMultiEventStore(data) {
       fundTransactions: data.fundTransactions || [],
       notifications: data.notifications || []
     });
+    syncEventBudgetFromCategories(legacyRecord);
     data.events = [legacyRecord];
     data.activeEventId = legacyRecord.id;
   } else {
-    data.events = data.events.map((record) => buildEventRecord(record));
+    data.events = data.events.map((record) => {
+      const normalizedRecord = buildEventRecord(record);
+      syncEventBudgetFromCategories(normalizedRecord);
+      return normalizedRecord;
+    });
     if (!data.activeEventId || !data.events.some((eventRecord) => eventRecord.id === data.activeEventId)) {
       const firstActive = data.events.find((eventRecord) => eventRecord.status !== 'archived') || data.events[0];
       data.activeEventId = firstActive.id;
@@ -229,6 +243,7 @@ function getEventRecordForUser(data, user) {
 }
 
 function eventSummary(eventRecord) {
+  syncEventBudgetFromCategories(eventRecord);
   const dashboard = calculateDashboard(eventRecord);
   return {
     id: eventRecord.id,
@@ -255,9 +270,7 @@ function syncSettlements(eventRecord) {
 
 function getSuggestedCollectionAmount(eventRecord) {
   const participants = Array.isArray(eventRecord.participants) ? eventRecord.participants : [];
-  const totalBudget = roundMoney(Number(eventRecord.event?.estimatedBudget || 0));
-  const plannedBudget = roundMoney((eventRecord.categories || []).reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
-  const collectionBasis = totalBudget > 0 ? totalBudget : plannedBudget;
+  const collectionBasis = syncEventBudgetFromCategories(eventRecord);
   return participants.length > 0 ? roundMoney(collectionBasis / participants.length) : 0;
 }
 
@@ -2001,7 +2014,7 @@ app.post('/api/events', asyncHandler(async (req, res) => {
       name: sanitizeObject(req.body).name,
       date: req.body.date,
       location: sanitizeObject(req.body).location,
-      estimatedBudget: roundMoney(Number(req.body.estimatedBudget || 0)),
+      estimatedBudget: 0,
       currency: req.body.currency || 'INR',
       settlementDeadline: req.body.settlementDeadline || '',
       organizer: sanitizeObject(req.body).organizer || { name: currentUser.name, email: currentUser.email }
@@ -2022,9 +2035,7 @@ app.post('/api/events', asyncHandler(async (req, res) => {
   if (!record.event.name || !record.event.date || !record.event.location || !record.event.currency) {
     return res.status(400).json({ error: 'Event name, date, location, and currency are required.' });
   }
-  if (record.event.estimatedBudget < 0) {
-    return res.status(400).json({ error: 'Estimated budget cannot be negative.' });
-  }
+  syncEventBudgetFromCategories(record);
 
   data.events.push(record);
   data.activeEventId = record.id;
@@ -2125,15 +2136,11 @@ app.put('/api/event', asyncHandler(async (req, res) => {
   const nextEvent = {
     ...activeEvent.event,
     ...sanitizeObject(req.body),
-    estimatedBudget: roundMoney(Number(req.body.estimatedBudget ?? activeEvent.event.estimatedBudget))
+    estimatedBudget: syncEventBudgetFromCategories(activeEvent)
   };
 
   if (!nextEvent.name || !nextEvent.date || !nextEvent.location || !nextEvent.currency) {
     return res.status(400).json({ error: 'Event name, date, location, and currency are required.' });
-  }
-
-  if (nextEvent.estimatedBudget < 0) {
-    return res.status(400).json({ error: 'Estimated budget cannot be negative.' });
   }
 
   const beforeEvent = activeEvent.event;
@@ -2270,6 +2277,8 @@ app.post('/api/categories', asyncHandler(async (req, res) => {
   }
 
   activeEvent.categories.push(category);
+  syncEventBudgetFromCategories(activeEvent);
+  ensureBudgetCollectionRecords(activeEvent);
   addAuditLog(activeEvent, currentUser, 'category.created', 'category', `Added budget category ${category.name}.`, { categoryId: category.id, estimatedCost: category.estimatedCost });
   await writeStore(data);
   res.status(201).json(category);
@@ -2292,6 +2301,8 @@ app.put('/api/categories/:id', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Category name is required and cost cannot be negative.' });
   }
 
+  syncEventBudgetFromCategories(activeEvent);
+  ensureBudgetCollectionRecords(activeEvent);
   addAuditLog(activeEvent, currentUser, 'category.updated', 'category', `Updated budget category ${category.name}.`, {
     categoryId: category.id,
     beforeName: beforeCategory.name,
@@ -2319,6 +2330,8 @@ app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
 
   const removedCategory = category;
   activeEvent.categories = activeEvent.categories.filter((category) => category.id !== req.params.id);
+  syncEventBudgetFromCategories(activeEvent);
+  ensureBudgetCollectionRecords(activeEvent);
   addAuditLog(activeEvent, currentUser, 'category.deleted', 'category', `Deleted budget category ${removedCategory.name}.`, { categoryId: removedCategory.id, estimatedCost: removedCategory.estimatedCost });
   await writeStore(data);
   res.status(204).send();

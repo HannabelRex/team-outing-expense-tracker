@@ -5,6 +5,11 @@ export function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
+export function calculatePlannedBudget(data = {}) {
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  return roundMoney(categories.reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
+}
+
 export function assertPositiveAmount(amount, label = 'Amount') {
   const numericAmount = Number(amount);
   if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
@@ -58,9 +63,9 @@ export function calculateBudgetCollections(data) {
   const categories = Array.isArray(data.categories) ? data.categories : [];
   const storedCollections = Array.isArray(data.budgetCollections) ? data.budgetCollections : [];
   const collectionMap = new Map(storedCollections.map((item) => [item.participantId, item]));
-  const totalBudget = roundMoney(Number(data.event?.estimatedBudget || 0));
-  const plannedBudget = roundMoney(categories.reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
-  const collectionBasis = totalBudget > 0 ? totalBudget : plannedBudget;
+  const plannedBudget = calculatePlannedBudget(data);
+  const totalBudget = plannedBudget;
+  const collectionBasis = plannedBudget;
   const suggestedPerParticipant = participants.length > 0 ? roundMoney(collectionBasis / participants.length) : 0;
 
   const participantsCollection = participants.map((participant) => {
@@ -302,8 +307,8 @@ export function calculateExpenseShares(expense) {
 export function calculateDashboard(data, options = {}) {
   const includeSettlementPayments = options.includeSettlementPayments !== false;
   const approvedOrPendingExpenses = data.expenses.filter((expense) => expense.approvalStatus !== 'rejected');
-  const totalBudget = roundMoney(Number(data.event.estimatedBudget || 0));
-  const plannedBudget = roundMoney(data.categories.reduce((sum, category) => sum + Number(category.estimatedCost || 0), 0));
+  const plannedBudget = calculatePlannedBudget(data);
+  const totalBudget = plannedBudget;
   const totalSpent = roundMoney(approvedOrPendingExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
   const remainingBudget = roundMoney(totalBudget - totalSpent);
 

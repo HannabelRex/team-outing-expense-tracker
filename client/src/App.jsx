@@ -1262,16 +1262,16 @@ function Dashboard({ data, activeTheme }) {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total budget" value={money(dashboard.totalBudget, currency)} helper="Event-level approved limit" />
+        <StatCard label="Total budget" value={money(dashboard.totalBudget, currency)} helper="Sum of Budget tab category estimates" />
         <StatCard label="Total spent" value={money(dashboard.totalSpent, currency)} helper="Approved and pending expenses" />
         <StatCard label="Remaining" value={money(dashboard.remainingBudget, currency)} danger={dashboard.isOverBudget} helper={dashboard.isOverBudget ? 'Over budget. The budget has left the group chat.' : 'Still within budget'} />
-        <StatCard label="Planned category budget" value={money(dashboard.plannedBudget, currency)} helper="Sum of category estimates" />
+        <StatCard label="Planned category budget" value={money(dashboard.plannedBudget, currency)} helper="Same source as total budget" />
       </div>
 
       {dashboard.budgetCollection && dashboard.budgetCollection.participantCount > 0 && (
         <Section title="Budget collection" icon={WalletCards}>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Suggested each" value={money(dashboard.budgetCollection.suggestedPerParticipant, currency)} helper="Based on event budget" />
+            <StatCard label="Suggested each" value={money(dashboard.budgetCollection.suggestedPerParticipant, currency)} helper="Based on Budget tab totals" />
             <StatCard label="Expected collection" value={money(dashboard.budgetCollection.expectedTotal, currency)} helper="Total to collect" />
             <StatCard label="Collected so far" value={money(dashboard.budgetCollection.collectedTotal, currency)} helper="Recorded in Budget tab" />
             <StatCard label="Pending collection" value={money(dashboard.budgetCollection.pendingTotal, currency)} helper="Still to collect" danger={Number(dashboard.budgetCollection.pendingTotal || 0) > 0} />
@@ -1595,7 +1595,7 @@ function AnalyticsDashboard({ data, activeTheme }) {
                 <tr className="text-left text-slate-500">
                   <th className="p-3">Event</th>
                   <th className="p-3">Status</th>
-                  <th className="p-3">Budget</th>
+                  <th className="p-3">Budget tab total</th>
                   <th className="p-3">Spent</th>
                   <th className="p-3">Used</th>
                   <th className="p-3">Participants</th>
@@ -1629,11 +1629,12 @@ function EventSetup({ data, reload, setToast, canManageEventSetup }) {
 
   useEffect(() => {
     setForm(data.event);
-  }, [data.event?.id, data.event?.name, data.event?.date, data.event?.location, data.event?.estimatedBudget, data.event?.currency, data.event?.settlementDeadline]);
+  }, [data.event?.id, data.event?.name, data.event?.date, data.event?.location, data.event?.currency, data.event?.settlementDeadline]);
 
   async function saveEvent(event) {
     event.preventDefault();
-    await api('/event', { method: 'PUT', body: JSON.stringify(form) });
+    const { estimatedBudget, ...eventPayload } = form;
+    await api('/event', { method: 'PUT', body: JSON.stringify(eventPayload) });
     setToast('Event updated. Civilization survives another form submission.');
     reload();
   }
@@ -1645,11 +1646,13 @@ function EventSetup({ data, reload, setToast, canManageEventSetup }) {
           title="Event setup is read-only for members"
           body="Finance and Admin users can change outing details. Members can view the event information without accidentally rearranging the universe."
         />
+        <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-900">
+          Event budget is calculated from the category estimates maintained in the Budget tab.
+        </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <ReadOnlyField label="Event name" value={data.event.name} />
           <ReadOnlyField label="Date" value={data.event.date} />
           <ReadOnlyField label="Location" value={data.event.location} />
-          <ReadOnlyField label="Estimated budget" value={money(data.event.estimatedBudget, data.event.currency)} />
           <ReadOnlyField label="Currency" value={data.event.currency} />
           <ReadOnlyField label="Settlement deadline" value={data.event.settlementDeadline || 'Not set'} />
           <ReadOnlyField label="Organizer name" value={data.event.organizer?.name || 'Not set'} />
@@ -1661,11 +1664,13 @@ function EventSetup({ data, reload, setToast, canManageEventSetup }) {
 
   return (
     <Section title="Event setup" icon={CalendarDays}>
+      <div className="mb-5 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-900">
+        Event budget is now calculated from the category estimates maintained in the Budget tab. Update category budgets there, and the event budget, dashboard, collections, analytics, and reports will follow automatically.
+      </div>
       <form onSubmit={saveEvent} className="grid gap-4 md:grid-cols-2">
         <label className="field-label">Event name<input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
         <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
         <label className="field-label">Location<input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required /></label>
-        <label className="field-label">Estimated budget<input className="input" type="number" min="0" value={form.estimatedBudget} onChange={(e) => setForm({ ...form, estimatedBudget: e.target.value })} required /></label>
         <label className="field-label">Currency<input className="input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} required /></label>
         <label className="field-label">Settlement deadline<input className="input" type="date" value={form.settlementDeadline || ''} onChange={(e) => setForm({ ...form, settlementDeadline: e.target.value })} /></label>
         <label className="field-label">Organizer name<input className="input" value={form.organizer?.name || ''} onChange={(e) => setForm({ ...form, organizer: { ...form.organizer, name: e.target.value } })} /></label>
@@ -1692,7 +1697,6 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
     name: '',
     date: new Date().toISOString().slice(0, 10),
     location: '',
-    estimatedBudget: '',
     currency: data.event.currency || 'INR',
     settlementDeadline: '',
     copyParticipantsFromEventId: ''
@@ -1711,7 +1715,6 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
         name: '',
         date: new Date().toISOString().slice(0, 10),
         location: '',
-        estimatedBudget: '',
         currency: data.event.currency || 'INR',
         settlementDeadline: '',
         copyParticipantsFromEventId: ''
@@ -1754,11 +1757,13 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
   return (
     <div className="space-y-6">
       <Section title="Create outing event" icon={CalendarDays}>
+        <div className="mb-5 rounded-2xl border border-sky-100 bg-sky-50 p-4 text-sm text-sky-900">
+          The event budget starts at zero and is calculated from the category estimates you add in the Budget tab after creating the event.
+        </div>
         <form onSubmit={createEvent} className="grid gap-4 md:grid-cols-2">
           <label className="field-label">Event name<input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="Goa Team Outing" /></label>
           <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
           <label className="field-label">Location<input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} required placeholder="Goa, India" /></label>
-          <label className="field-label">Estimated budget<input className="input" type="number" min="0" value={form.estimatedBudget} onChange={(e) => setForm({ ...form, estimatedBudget: e.target.value })} required /></label>
           <label className="field-label">Currency<input className="input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} required /></label>
           <label className="field-label">Settlement deadline<input className="input" type="date" value={form.settlementDeadline} onChange={(e) => setForm({ ...form, settlementDeadline: e.target.value })} /></label>
           <label className="field-label md:col-span-2">Copy participants from existing event
@@ -1780,7 +1785,7 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
                 <th className="p-3">Status</th>
                 <th className="p-3">Date</th>
                 <th className="p-3">Location</th>
-                <th className="p-3">Budget</th>
+                <th className="p-3">Budget tab total</th>
                 <th className="p-3">Spent</th>
                 <th className="p-3">People</th>
                 <th className="p-3">Actions</th>
@@ -2244,7 +2249,7 @@ function BudgetCollectionTracker({ data, reload, setToast, canManageBudget }) {
   return (
     <Section title="Budget collection tracker" icon={WalletCards}>
       <div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-slate-700">
-        Suggested collection is calculated from the event budget divided by active participants. Admin and Finance users can override expected amounts and record actual collections.
+        Suggested collection is calculated from the Budget tab category total divided by active participants. Admin and Finance users can override expected amounts and record actual collections.
       </div>
 
       <div className="mb-5 grid gap-3 md:grid-cols-4">
