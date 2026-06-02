@@ -3228,17 +3228,26 @@ function Expenses({ data, reload, setToast, isOnline }) {
               <tbody>
                 {filteredExpenses.map((expense) => (
                   <tr key={expense.id} className="border-t border-slate-100 align-top">
-                    <td className="p-3"><p className="font-bold text-slate-900">{expense.title}</p><p className="text-xs text-slate-500">{expense.date} · {expense.paymentMethod} · {expense.splitMethod}</p>{expense.receipt && <p className="mt-1 text-xs text-slate-500">Receipt: <a className="font-semibold text-slate-800 underline" href={expense.receipt.url} target="_blank" rel="noreferrer">{expense.receipt.fileName}</a></p>}</td>
+                    <td className="p-3">
+                      <p className="font-bold text-slate-900">{expense.title}</p>
+                      <p className="text-xs text-slate-500">{expense.date} · {expense.paymentMethod} · {expense.splitMethod}</p>
+                      {expense.notes && (
+                        <p className="mt-2 max-w-md rounded-2xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600 ring-1 ring-slate-100">
+                          <span className="font-black text-slate-700">Description:</span> {expense.notes}
+                        </p>
+                      )}
+                      {expense.receipt && <p className="mt-1 text-xs text-slate-500">Receipt: <a className="font-semibold text-slate-800 underline" href={expense.receipt.url} target="_blank" rel="noreferrer">{expense.receipt.fileName}</a></p>}
+                    </td>
                     <td className="p-3">{expense.categoryName}</td>
                     <td className="p-3">{expense.paymentSource === 'pool' ? <><span className="font-bold text-emerald-700">Team fund pool</span><p className="text-xs text-slate-500">Handled by {expense.handledByName}</p></> : expense.paidByName}</td>
                     <td className="p-3 font-bold">{money(expense.amount, currency)}</td>
                     <td className="p-3"><span className={statusBadge(expense.approvalStatus)}>{expense.approvalStatus}</span></td>
                     <td className="p-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button className="btn-ghost" type="button" onClick={() => startEditExpense(expense)} disabled={expensesLockedByClaim}><Pencil size={15} /> Edit</button>
-                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'approved')} disabled={busy || expensesLockedByClaim}>Approve</button>
-                        <button className="btn-ghost" type="button" onClick={() => approveExpense(expense, 'rejected')} disabled={busy || expensesLockedByClaim}>Reject</button>
-                        <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteExpense(expense.id)} disabled={busy || expensesLockedByClaim}><Trash2 size={15} /> Delete</button>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button className="btn-icon" type="button" onClick={() => startEditExpense(expense)} disabled={expensesLockedByClaim} title="Edit expense" aria-label={`Edit ${expense.title}`}><Pencil size={14} /></button>
+                        <button className="btn-icon text-emerald-700" type="button" onClick={() => approveExpense(expense, 'approved')} disabled={busy || expensesLockedByClaim} title="Approve expense" aria-label={`Approve ${expense.title}`}><CheckCircle2 size={14} /></button>
+                        <button className="btn-icon text-amber-700" type="button" onClick={() => approveExpense(expense, 'rejected')} disabled={busy || expensesLockedByClaim} title="Reject expense" aria-label={`Reject ${expense.title}`}><X size={14} /></button>
+                        <button className="btn-icon text-rose-700" type="button" onClick={() => deleteExpense(expense.id)} disabled={busy || expensesLockedByClaim} title="Delete expense" aria-label={`Delete ${expense.title}`}><Trash2 size={14} /></button>
                       </div>
                     </td>
                   </tr>

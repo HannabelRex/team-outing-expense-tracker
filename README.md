@@ -575,3 +575,7 @@ Phase 21A adds a new **Claims** tab for post-trip company reimbursement tracking
 
 Received pool-based claims increase the Team Fund Pool and flow into Final Pool Closure. Direct participant reimbursements do not enter the pool; they reduce the participant's final closure result to avoid double reimbursement. PDF and CSV reports now include company claim totals and reimbursement impact.
 
+
+### Expense List Description and Compact Actions Hotfix
+
+The Expenses tab list now shows each expense note/description below the expense title, so users can understand the purpose of an expense without opening edit mode. The row actions were also changed to compact icon buttons for Edit, Approve, Reject, and Delete, reducing horizontal clutter in the expense table.
