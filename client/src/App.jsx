@@ -3398,9 +3398,11 @@ function NotificationInbox({ open, onClose, items, loading, onRefresh, onMarkRea
   );
 }
 
-function Reports({ data, setToast }) {
+function Reports({ data, setToast, activeTheme }) {
   const currency = data.event.currency;
   const [busy, setBusy] = useState('');
+  const chartTheme = useMemo(() => buildChartTheme(activeTheme), [activeTheme]);
+  const tooltipProps = useMemo(() => themedTooltipProps(chartTheme), [chartTheme]);
   const pieData = data.dashboard.categorySpending.filter((category) => category.actualCost > 0).map((category) => ({ name: category.name, value: category.actualCost }));
   const baseName = reportFileBaseName(data.event.name);
 
@@ -3452,10 +3454,25 @@ function Reports({ data, setToast }) {
           {pieData.length === 0 ? <EmptyState title="No chart data" body="Add expenses to visualize spending." /> : (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={105} label>
-                  {pieData.map((entry) => <Cell key={entry.name} />)}
+                <Pie
+                  data={pieData}
+                  dataKey="value"
+                  nameKey="name"
+                  outerRadius={105}
+                  label={({ name, value }) => `${name}: ${money(value, currency)}`}
+                  labelLine={{ stroke: chartTheme.axis }}
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell
+                      key={entry.name}
+                      fill={chartTheme.palette[index % chartTheme.palette.length]}
+                      stroke="rgba(255, 255, 255, 0.92)"
+                      strokeWidth={2}
+                    />
+                  ))}
                 </Pie>
-                <Tooltip formatter={(value) => money(value, currency)} />
+                <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
+                <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
               </PieChart>
             </ResponsiveContainer>
           )}
@@ -4798,7 +4815,7 @@ function AppShell() {
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />}
         {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
-        {activeTab === 'reports' && <Reports data={data} setToast={setToast} />}
+        {activeTab === 'reports' && <Reports data={data} setToast={setToast} activeTheme={activeTheme} />}
         {activeTab === 'analytics' && canViewAnalytics && <AnalyticsDashboard data={data} activeTheme={activeTheme} />}
         {activeTab === 'notifications' && canViewNotifications && <Notifications data={data} setToast={setToast} />}
         {activeTab === 'audit' && canViewAudit && <AuditTrail data={data} setToast={setToast} />}

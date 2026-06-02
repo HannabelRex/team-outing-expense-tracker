@@ -541,3 +541,7 @@ Non-custom budget collection expected amounts now follow the rounded suggested c
 ### Personal off-budget split expenses
 
 A built-in **Personal (off-budget split)** category is available in the Expenses tab. Expenses in this category are excluded from budget totals, category actuals, fund pool calculations, and official expense report lists, but they still participate in selected-participant split and settlement calculations.
+
+## Reports Pie Chart Theme Colors Hotfix
+
+The Reports tab pie chart now uses the active theme palette, with colored slices, themed tooltip/legend styling, and white slice borders for better readability. No backend or environment changes are required.
