@@ -78,7 +78,8 @@ export function calculateBudgetCollections(data) {
   const participantsCollection = participants.map((participant) => {
     const stored = collectionMap.get(participant.id) || {};
     const rawExpected = Number(stored.expectedAmount);
-    const expectedAmount = Number.isFinite(rawExpected) && rawExpected >= 0
+    const isExpectedCustom = Boolean(stored.isExpectedCustom);
+    const expectedAmount = isExpectedCustom && Number.isFinite(rawExpected) && rawExpected >= 0
       ? roundMoney(rawExpected)
       : suggestedPerParticipant;
     const payments = normalizeBudgetCollectionPayments(stored.payments);
@@ -92,7 +93,7 @@ export function calculateBudgetCollections(data) {
       emailOrPhone: participant.emailOrPhone || participant.email || '',
       suggestedAmount: suggestedPerParticipant,
       expectedAmount,
-      isExpectedCustom: Boolean(stored.isExpectedCustom),
+      isExpectedCustom,
       collectedAmount,
       pendingAmount,
       status: collectionStatus(expectedAmount, collectedAmount),

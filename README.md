@@ -526,3 +526,7 @@ Phase 19 adds a Team Fund Pool Ledger for collection-first outings. Participant 
 ### Budget collection rounding hotfix
 
 Budget collection suggestions are now rounded up to the nearest 100. For example, if the raw split is `INR 5,769.23`, the suggested collection becomes `INR 5,800`. This keeps participant collection amounts clean and avoids decimal collection requests. Custom expected collection amounts are preserved.
+
+### Budget Collection Expected Rounding Hotfix
+
+Non-custom budget collection expected amounts now follow the rounded suggested collection amount. For example, if the raw split is `INR 5,769.23`, the suggested and expected participant collection becomes `INR 5,800`, and expected collection totals are calculated from that rounded amount. Custom expected amounts are preserved unless reset by Admin/Finance.

@@ -140,6 +140,29 @@ assert.equal(roundedCollectionSummary.expectedTotal, 17400);
 assert.equal(roundedCollectionSummary.participants[0].expectedAmount, 5800);
 
 
+const staleSuggestedCollectionData = {
+  event: { estimatedBudget: 0 },
+  participants: [
+    { id: 'sp1', name: 'Stored A', emailOrPhone: 'stored-a@test.com' },
+    { id: 'sp2', name: 'Stored B', emailOrPhone: 'stored-b@test.com' },
+    { id: 'sp3', name: 'Stored C', emailOrPhone: 'stored-c@test.com' }
+  ],
+  categories: [{ id: 'c-stale-round', name: 'Rounded split', estimatedCost: 17307.69 }],
+  expenses: [],
+  settlements: [],
+  budgetCollections: [
+    { participantId: 'sp1', expectedAmount: 5769.23, isExpectedCustom: false, payments: [] },
+    { participantId: 'sp2', expectedAmount: 5769.23, payments: [] }
+  ]
+};
+
+const staleSuggestedCollectionSummary = calculateBudgetCollections(staleSuggestedCollectionData);
+assert.equal(staleSuggestedCollectionSummary.suggestedPerParticipant, 5800);
+assert.equal(staleSuggestedCollectionSummary.expectedTotal, 17400);
+assert.equal(staleSuggestedCollectionSummary.participants[0].expectedAmount, 5800);
+assert.equal(staleSuggestedCollectionSummary.participants[1].expectedAmount, 5800);
+assert.equal(staleSuggestedCollectionSummary.participants[2].expectedAmount, 5800);
+
 
 const fundPoolData = {
   event: { estimatedBudget: 1000 },
