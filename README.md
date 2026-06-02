@@ -564,3 +564,7 @@ The generated PDF report now uses a landscape A4 layout with compact summary car
 ### Final closure round-off balancer hotfix
 
 Final pool closure now calculates a net round-off balancing line. Participant closure values are still shown as whole rupee amounts, but the app also compares the rounded cash net outflow against the exact remaining pool balance. If the rounded plan would make the financier pay extra or keep excess cash, the Settlements tab shows a clear round-off balancer action such as `Collect round-off balance` or `Refund round-off balance`. PDF and CSV reports include the same reconciliation fields.
+
+### Dashboard UX Redesign Hotfix
+
+The Dashboard first screen was redesigned around an executive summary layout. It now shows a smart Event health banner, four icon-based KPI cards, a Financial flow section, Budget/Collection/Pool progress bars, a Next action recommendation, and a compact Quick status panel. The duplicated Budget Collection and Team Fund Pool card blocks were merged into a clearer money-flow view while keeping Category spending and Participant balances below the fold. This is a frontend-only update and does not require new backend routes or environment variables.

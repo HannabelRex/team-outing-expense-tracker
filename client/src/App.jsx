@@ -1292,6 +1292,81 @@ function NoAssignedDashboard({ data }) {
   );
 }
 
+function percentValue(numerator, denominator) {
+  const top = Number(numerator || 0);
+  const bottom = Number(denominator || 0);
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= 0) return 0;
+  return Math.max(0, Math.min(100, (top / bottom) * 100));
+}
+
+function DashboardMetricCard({ icon: Icon, label, value, helper, tone = 'blue', danger = false }) {
+  const toneClasses = {
+    blue: 'from-blue-50 to-sky-50 text-blue-700 ring-blue-100',
+    emerald: 'from-emerald-50 to-teal-50 text-emerald-700 ring-emerald-100',
+    amber: 'from-amber-50 to-orange-50 text-amber-700 ring-amber-100',
+    rose: 'from-rose-50 to-pink-50 text-rose-700 ring-rose-100',
+    slate: 'from-slate-50 to-white text-slate-800 ring-slate-100',
+    purple: 'from-violet-50 to-fuchsia-50 text-violet-700 ring-violet-100'
+  };
+  const iconClasses = {
+    blue: 'bg-blue-600 text-white',
+    emerald: 'bg-emerald-600 text-white',
+    amber: 'bg-amber-500 text-white',
+    rose: 'bg-rose-600 text-white',
+    slate: 'bg-slate-900 text-white',
+    purple: 'bg-violet-600 text-white'
+  };
+  const selectedTone = danger ? 'rose' : tone;
+
+  return (
+    <div className={`rounded-3xl bg-gradient-to-br p-5 shadow-soft ring-1 ${toneClasses[selectedTone] || toneClasses.blue}`}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <p className="text-sm font-bold text-slate-600">{label}</p>
+        {Icon && <span className={`rounded-2xl p-2 ${iconClasses[selectedTone] || iconClasses.blue}`}><Icon size={18} /></span>}
+      </div>
+      <p className={`text-2xl font-black ${danger ? 'text-rose-700' : 'text-slate-950'}`}>{value}</p>
+      {helper && <p className="mt-2 text-xs font-semibold text-slate-500">{helper}</p>}
+    </div>
+  );
+}
+
+function DashboardProgressBar({ label, value, helper, percent, color, danger }) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent || 0)));
+  return (
+    <div className="rounded-2xl bg-white/80 p-4 ring-1 ring-slate-100">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold text-slate-700">{label}</p>
+          {helper && <p className="mt-1 text-xs text-slate-500">{helper}</p>}
+        </div>
+        <p className={`text-lg font-black ${danger ? 'text-rose-700' : 'text-slate-950'}`}>{value}</p>
+      </div>
+      <div className="mt-3 h-3 overflow-hidden rounded-full bg-slate-200">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${safePercent}%`, background: danger ? '#E11D48' : color }}
+        />
+      </div>
+      <p className="mt-2 text-right text-xs font-bold text-slate-500">{safePercent.toFixed(1)}%</p>
+    </div>
+  );
+}
+
+function DashboardFlowStep({ icon: Icon, label, value, helper, color }) {
+  return (
+    <div className="relative rounded-3xl border border-slate-100 bg-white/85 p-4 shadow-sm">
+      <div className="mb-3 flex items-center gap-3">
+        <span className="rounded-2xl p-2 text-white shadow-sm" style={{ background: color }}>
+          <Icon size={18} />
+        </span>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      </div>
+      <p className="text-xl font-black text-slate-950">{value}</p>
+      {helper && <p className="mt-1 text-xs font-semibold text-slate-500">{helper}</p>}
+    </div>
+  );
+}
+
 function Dashboard({ data, activeTheme }) {
   if (data.noAssignedEvent) return <NoAssignedDashboard data={data} />;
 
@@ -1301,37 +1376,118 @@ function Dashboard({ data, activeTheme }) {
   const axisProps = useMemo(() => themedAxisProps(chartTheme), [chartTheme]);
   const tooltipProps = useMemo(() => themedTooltipProps(chartTheme), [chartTheme]);
   const hasSettlementPayments = dashboard.participantBalances.some((person) => Number(person.settlementPaid || 0) > 0 || Number(person.settlementReceived || 0) > 0);
+  const finalClosure = data.finalClosure || {};
+  const collection = dashboard.budgetCollection || {};
+  const fundPool = dashboard.fundPool || {};
+  const pendingExpenses = (data.expenses || []).filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
+
+  const totalBudget = Number(dashboard.totalBudget || 0);
+  const totalSpent = Number(dashboard.totalSpent || 0);
+  const remainingBudget = Number(dashboard.remainingBudget || 0);
+  const poolBalance = Number(fundPool.currentBalance || 0);
+  const collectedTotal = Number(collection.collectedTotal || 0);
+  const expectedTotal = Number(collection.expectedTotal || 0);
+  const pendingCollection = Number(collection.pendingTotal || 0);
+  const poolSpent = Number(fundPool.poolExpenseTotal || 0);
+  const closureRows = finalClosure.rows || [];
+  const closurePendingCount = Number(finalClosure.pendingCount ?? (closureRows.filter((row) => row.completionStatus === 'pending').length || 0));
+  const closureCompletedCount = Number(finalClosure.completedCount || 0);
+  const closureTotalCount = closureRows.length || Number(data.participants?.length || 0);
+  const budgetUsedPercent = percentValue(totalSpent, totalBudget);
+  const collectionPercent = percentValue(collectedTotal, expectedTotal);
+  const poolUsagePercent = percentValue(poolSpent, collectedTotal);
+
+  const budgetMessage = dashboard.isOverBudget
+    ? `Over budget by ${money(Math.abs(remainingBudget), currency)}`
+    : `Within budget by ${money(remainingBudget, currency)}`;
+  const collectionMessage = pendingCollection > 0
+    ? `${money(pendingCollection, currency)} still to collect`
+    : 'Collection complete';
+  const closureMessage = closureRows.length > 0
+    ? closurePendingCount > 0
+      ? `Final closure pending for ${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'}`
+      : 'Final closure complete'
+    : 'Final closure not calculated yet';
+
+  const nextAction = pendingExpenses.length > 0
+    ? { title: 'Review pending expenses', body: `${pendingExpenses.length} expense${pendingExpenses.length === 1 ? '' : 's'} waiting for approval.`, tone: 'amber', icon: Receipt }
+    : pendingCollection > 0
+      ? { title: 'Record pending collections', body: `${money(pendingCollection, currency)} is still pending from participants.`, tone: 'rose', icon: WalletCards }
+      : closureRows.length === 0
+        ? { title: 'Calculate final closure', body: 'Collections and pool spending are ready for final refund/collect calculation.', tone: 'blue', icon: CheckCircle2 }
+        : closurePendingCount > 0
+          ? { title: 'Close final items', body: `${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'} still need final refund/collection closure.`, tone: 'purple', icon: CheckCircle2 }
+          : { title: 'Export final report', body: 'The outing money flow looks closed. Export the report for records.', tone: 'emerald', icon: FileText };
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total budget" value={money(dashboard.totalBudget, currency)} helper="Sum of Budget tab category estimates" />
-        <StatCard label="Total spent" value={money(dashboard.totalSpent, currency)} helper="Approved and pending expenses" />
-        <StatCard label="Remaining" value={money(dashboard.remainingBudget, currency)} danger={dashboard.isOverBudget} helper={dashboard.isOverBudget ? 'Over budget. The budget has left the group chat.' : 'Still within budget'} />
-        <StatCard label="Planned category budget" value={money(dashboard.plannedBudget, currency)} helper="Same source as total budget" />
+      <div className={`rounded-[2rem] border p-5 shadow-soft ${dashboard.isOverBudget ? 'border-rose-200 bg-rose-50' : 'border-blue-100 bg-white'}`}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-start gap-4">
+            <span className="rounded-2xl p-3 text-white shadow-md" style={{ background: chartTheme.primary }}>
+              {dashboard.isOverBudget ? <AlertTriangle size={22} /> : <CheckCircle2 size={22} />}
+            </span>
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Event health</p>
+              <h2 className="mt-1 text-xl font-black text-slate-950">{event.name || 'Current outing'} financial snapshot</h2>
+              <p className="mt-2 text-sm font-semibold text-slate-600">
+                {budgetMessage} · Pool balance {money(poolBalance, currency)} · {collectionMessage} · {closureMessage}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${dashboard.isOverBudget ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{dashboard.isOverBudget ? 'Budget exceeded' : 'Within budget'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${pendingCollection > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{pendingCollection > 0 ? 'Collection pending' : 'Fully collected'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${poolBalance < 0 ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{poolBalance < 0 ? 'Pool deficit' : 'Pool available'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${closurePendingCount > 0 || closureRows.length === 0 ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'}`}>{closureRows.length === 0 ? 'Closure not calculated' : closurePendingCount > 0 ? 'Closure pending' : 'Closure complete'}</span>
+          </div>
+        </div>
       </div>
 
-      {dashboard.budgetCollection && dashboard.budgetCollection.participantCount > 0 && (
-        <Section title="Budget collection" icon={WalletCards}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Suggested each" value={money(dashboard.budgetCollection.suggestedPerParticipant, currency)} helper="Based on Budget tab totals" />
-            <StatCard label="Expected collection" value={money(dashboard.budgetCollection.expectedTotal, currency)} helper="Total to collect" />
-            <StatCard label="Collected so far" value={money(dashboard.budgetCollection.collectedTotal, currency)} helper="Recorded in Budget tab" />
-            <StatCard label="Pending collection" value={money(dashboard.budgetCollection.pendingTotal, currency)} helper="Still to collect" danger={Number(dashboard.budgetCollection.pendingTotal || 0) > 0} />
-          </div>
-        </Section>
-      )}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <DashboardMetricCard icon={WalletCards} label="Total budget" value={money(totalBudget, currency)} helper="From Budget tab categories" tone="blue" />
+        <DashboardMetricCard icon={Receipt} label="Total spent" value={money(totalSpent, currency)} helper="Approved and pending expenses" tone={dashboard.isOverBudget ? 'rose' : 'amber'} danger={dashboard.isOverBudget} />
+        <DashboardMetricCard icon={WalletCards} label="Pool balance" value={money(poolBalance, currency)} helper="Available collected money" tone={poolBalance < 0 ? 'rose' : 'emerald'} danger={poolBalance < 0} />
+        <DashboardMetricCard icon={CheckCircle2} label="Final closure" value={`${closureCompletedCount}/${closureTotalCount || 0}`} helper={closureRows.length === 0 ? 'Not calculated yet' : `${closurePendingCount} pending`} tone={closurePendingCount > 0 || closureRows.length === 0 ? 'purple' : 'emerald'} />
+      </div>
 
-      {dashboard.fundPool && (
-        <Section title="Team fund pool" icon={WalletCards}>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Collected into pool" value={money(dashboard.fundPool.collectedTotal, currency)} helper="From participant collections" />
-            <StatCard label="Spent from pool" value={money(dashboard.fundPool.poolExpenseTotal, currency)} helper={`${dashboard.fundPool.poolExpenseCount || 0} pool expense${(dashboard.fundPool.poolExpenseCount || 0) === 1 ? '' : 's'}`} />
-            <StatCard label="Reimbursed / refunded" value={money(Number(dashboard.fundPool.reimbursementTotal || 0) + Number(dashboard.fundPool.refundTotal || 0), currency)} helper="Paid back from the pool" />
-            <StatCard label="Current pool balance" value={money(dashboard.fundPool.currentBalance, currency)} helper="Available collected money" danger={Number(dashboard.fundPool.currentBalance || 0) < 0} />
+      <Section title="Financial flow" icon={WalletCards}>
+        <div className="grid gap-4 lg:grid-cols-4">
+          <DashboardFlowStep icon={WalletCards} label="Budget planned" value={money(totalBudget, currency)} helper="Budget tab total" color={chartTheme.primary} />
+          <DashboardFlowStep icon={Users} label="Collected" value={money(collectedTotal, currency)} helper={`${collection.participantCount || data.participants?.length || 0} participant${(collection.participantCount || data.participants?.length || 0) === 1 ? '' : 's'}`} color={chartTheme.secondary || chartTheme.accent} />
+          <DashboardFlowStep icon={Receipt} label="Spent" value={money(poolSpent || totalSpent, currency)} helper={`${fundPool.poolExpenseCount || 0} pool expense${(fundPool.poolExpenseCount || 0) === 1 ? '' : 's'}`} color={chartTheme.accent} />
+          <DashboardFlowStep icon={CheckCircle2} label="Remaining" value={money(poolBalance, currency)} helper={closureRows.length > 0 ? `Closure ${closureCompletedCount}/${closureTotalCount || 0}` : 'Closure not calculated'} color={poolBalance < 0 ? '#E11D48' : '#059669'} />
+        </div>
+        <div className="mt-5 grid gap-4 lg:grid-cols-3">
+          <DashboardProgressBar label="Budget usage" value={money(totalSpent, currency)} helper={`${money(totalSpent, currency)} of ${money(totalBudget, currency)} used`} percent={budgetUsedPercent} color={chartTheme.primary} danger={dashboard.isOverBudget} />
+          <DashboardProgressBar label="Collection progress" value={money(collectedTotal, currency)} helper={`${money(collectedTotal, currency)} of ${money(expectedTotal, currency)} collected`} percent={collectionPercent} color={chartTheme.secondary || '#10B981'} danger={pendingCollection > 0} />
+          <DashboardProgressBar label="Pool usage" value={money(poolSpent, currency)} helper={`${money(poolSpent, currency)} spent from ${money(collectedTotal, currency)} collected`} percent={poolUsagePercent} color={chartTheme.accent} danger={poolBalance < 0} />
+        </div>
+      </Section>
+
+      <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <Section title="Next action" icon={nextAction.icon}>
+          <div className="rounded-3xl bg-gradient-to-br from-slate-50 to-white p-5 ring-1 ring-slate-100">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Recommended</p>
+            <h3 className="mt-2 text-2xl font-black text-slate-950">{nextAction.title}</h3>
+            <p className="mt-2 text-sm font-semibold text-slate-600">{nextAction.body}</p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold">
+              <span className="rounded-full bg-blue-50 px-3 py-2 text-blue-700">Budget used {budgetUsedPercent.toFixed(1)}%</span>
+              <span className="rounded-full bg-emerald-50 px-3 py-2 text-emerald-700">Collection {collectionPercent.toFixed(1)}%</span>
+              <span className="rounded-full bg-cyan-50 px-3 py-2 text-cyan-700">Pool usage {poolUsagePercent.toFixed(1)}%</span>
+            </div>
           </div>
         </Section>
-      )}
+
+        <Section title="Quick status" icon={CheckCircle2}>
+          <div className="space-y-3 text-sm font-semibold text-slate-600">
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Expected collection</span><strong className="text-slate-950">{money(expectedTotal, currency)}</strong></div>
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Pending collection</span><strong className={pendingCollection > 0 ? 'text-rose-700' : 'text-emerald-700'}>{money(pendingCollection, currency)}</strong></div>
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Reimbursed / refunded</span><strong className="text-slate-950">{money(Number(fundPool.reimbursementTotal || 0) + Number(fundPool.refundTotal || 0), currency)}</strong></div>
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3"><span>Pending approvals</span><strong className={pendingExpenses.length > 0 ? 'text-amber-700' : 'text-emerald-700'}>{pendingExpenses.length}</strong></div>
+          </div>
+        </Section>
+      </div>
 
       {dashboard.isOverBudget && (
         <div className="flex items-center gap-3 rounded-3xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
@@ -1397,7 +1553,6 @@ function Dashboard({ data, activeTheme }) {
     </div>
   );
 }
-
 
 function AnalyticsDashboard({ data, activeTheme }) {
   const analytics = useMemo(() => {
