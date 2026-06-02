@@ -545,3 +545,8 @@ A built-in **Personal (off-budget split)** category is available in the Expenses
 ## Reports Pie Chart Theme Colors Hotfix
 
 The Reports tab pie chart now uses the active theme palette, with colored slices, themed tooltip/legend styling, and white slice borders for better readability. No backend or environment changes are required.
+
+
+## Final Pool Closure Recovery Hotfix
+
+Restored the Phase 20 Final Pool Closure section under Settlements and the related backend/report logic after it was missing from the current working copy.

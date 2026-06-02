@@ -239,6 +239,131 @@ export function calculateFundPool(data) {
   };
 }
 
+
+function normalizeFinalClosureRecords(records = []) {
+  if (!Array.isArray(records)) return [];
+  return records
+    .map((record) => ({
+      participantId: record.participantId || '',
+      status: record.status || 'pending',
+      amount: roundMoney(Number(record.amount || 0)),
+      mode: record.mode || 'UPI',
+      reference: record.reference || '',
+      note: record.note || '',
+      closedAt: record.closedAt || record.updatedAt || null,
+      updatedAt: record.updatedAt || null
+    }))
+    .filter((record) => record.participantId);
+}
+
+export function calculateFinalClosure(data) {
+  const participants = Array.isArray(data.participants) ? data.participants : [];
+  const budgetCollection = calculateBudgetCollections(data);
+  const fundPool = calculateFundPool(data);
+  const settlementPlan = generateSettlementPlan(data);
+  const storedClosure = data.finalClosure && typeof data.finalClosure === 'object' ? data.finalClosure : {};
+  const recordMap = new Map(normalizeFinalClosureRecords(storedClosure.records).map((record) => [record.participantId, record]));
+
+  const collectionMap = new Map((budgetCollection.participants || []).map((row) => [row.participantId, row]));
+  const settlementPayableMap = new Map(participants.map((participant) => [participant.id, 0]));
+  const settlementReceivableMap = new Map(participants.map((participant) => [participant.id, 0]));
+
+  for (const settlement of settlementPlan.settlements || []) {
+    const remainingAmount = roundMoney(Math.max(0, Number(settlement.amount || 0) - Number(settlement.paidAmount || 0)));
+    if (remainingAmount <= EPSILON) continue;
+    settlementPayableMap.set(
+      settlement.fromParticipantId,
+      roundMoney((settlementPayableMap.get(settlement.fromParticipantId) || 0) + remainingAmount)
+    );
+    settlementReceivableMap.set(
+      settlement.toParticipantId,
+      roundMoney((settlementReceivableMap.get(settlement.toParticipantId) || 0) + remainingAmount)
+    );
+  }
+
+  const currentPoolBalance = roundMoney(Number(fundPool.currentBalance || 0));
+  const distributablePoolBalance = Math.max(0, currentPoolBalance);
+  const poolDeficit = Math.max(0, roundMoney(-currentPoolBalance));
+  const collectedTotal = roundMoney(Number(budgetCollection.collectedTotal || 0));
+  const expectedTotal = roundMoney(Number(budgetCollection.expectedTotal || 0));
+  const participantCount = participants.length || 1;
+
+  const rows = participants.map((participant) => {
+    const collection = collectionMap.get(participant.id) || {};
+    const paidToPool = roundMoney(Number(collection.collectedAmount || 0));
+    const expectedCollection = roundMoney(Number(collection.expectedAmount || 0));
+    const pendingCollection = roundMoney(Math.max(0, Number(collection.pendingAmount || 0)));
+    const refundShareRatio = collectedTotal > EPSILON ? paidToPool / collectedTotal : 1 / participantCount;
+    const deficitShareRatio = expectedTotal > EPSILON ? expectedCollection / expectedTotal : 1 / participantCount;
+    const poolRefundShare = roundMoney(distributablePoolBalance * refundShareRatio);
+    const poolDeficitShare = roundMoney(poolDeficit * deficitShareRatio);
+    const settlementPayable = roundMoney(settlementPayableMap.get(participant.id) || 0);
+    const settlementReceivable = roundMoney(settlementReceivableMap.get(participant.id) || 0);
+    const settlementAdjustment = roundMoney(settlementReceivable - settlementPayable);
+    const finalAmount = roundMoney(poolRefundShare - poolDeficitShare + settlementAdjustment - pendingCollection);
+    const absoluteFinalAmount = roundMoney(Math.abs(finalAmount));
+    const finalAction = finalAmount > EPSILON ? 'refund-due' : finalAmount < -EPSILON ? 'collect-due' : 'settled';
+    const record = recordMap.get(participant.id) || {};
+    const completionStatus = finalAction === 'settled'
+      ? 'settled'
+      : record.status === 'completed'
+        ? (finalAction === 'refund-due' ? 'refund-paid' : 'amount-collected')
+        : record.status === 'waived'
+          ? 'waived'
+          : 'pending';
+
+    return {
+      participantId: participant.id,
+      name: participant.name,
+      emailOrPhone: participant.emailOrPhone || participant.email || '',
+      paidToPool,
+      expectedCollection,
+      pendingCollection,
+      poolRefundShare,
+      poolDeficitShare,
+      settlementPayable,
+      settlementReceivable,
+      settlementAdjustment,
+      finalAmount,
+      absoluteFinalAmount,
+      finalAction,
+      completionStatus,
+      recordedAmount: roundMoney(Number(record.amount || 0)),
+      mode: record.mode || '',
+      reference: record.reference || '',
+      note: record.note || '',
+      closedAt: record.closedAt || null
+    };
+  });
+
+  const totalRefundDue = roundMoney(rows.filter((row) => row.finalAmount > EPSILON).reduce((sum, row) => sum + row.finalAmount, 0));
+  const totalCollectDue = roundMoney(rows.filter((row) => row.finalAmount < -EPSILON).reduce((sum, row) => sum + Math.abs(row.finalAmount), 0));
+  const totalNetFinal = roundMoney(rows.reduce((sum, row) => sum + row.finalAmount, 0));
+  const completedCount = rows.filter((row) => row.finalAction === 'settled' || row.completionStatus === 'refund-paid' || row.completionStatus === 'amount-collected' || row.completionStatus === 'waived').length;
+  const pendingCount = rows.length - completedCount;
+
+  return {
+    status: storedClosure.status || (pendingCount === 0 && rows.length > 0 ? 'closed' : 'calculated'),
+    calculatedAt: storedClosure.calculatedAt || null,
+    updatedAt: storedClosure.updatedAt || null,
+    currentPoolBalance,
+    distributablePoolBalance,
+    poolDeficit,
+    totalCollected: collectedTotal,
+    totalExpectedCollection: expectedTotal,
+    totalPendingCollection: budgetCollection.pendingTotal,
+    totalSettlementPayable: roundMoney(rows.reduce((sum, row) => sum + row.settlementPayable, 0)),
+    totalSettlementReceivable: roundMoney(rows.reduce((sum, row) => sum + row.settlementReceivable, 0)),
+    totalRefundDue,
+    totalCollectDue,
+    totalNetFinal,
+    completedCount,
+    pendingCount,
+    allClosed: pendingCount === 0 && rows.length > 0,
+    rows
+  };
+}
+
 export function validateExpensePayload(expense) {
   const requiredFields = ['title', 'amount', 'categoryId', 'date', 'paidByParticipantId', 'paymentMethod'];
   const missing = requiredFields.filter((field) => expense[field] === undefined || expense[field] === null || expense[field] === '');
@@ -538,6 +663,7 @@ export function buildExpenseReport(data) {
     },
     budgetCollection: dashboard.budgetCollection,
     fundPool: dashboard.fundPool,
+    finalClosure: calculateFinalClosure(data),
     categoryWiseExpenses: dashboard.categorySpending,
     participantWiseContribution: dashboard.participantBalances,
     settlementSummary: settlementPlan.settlements,
