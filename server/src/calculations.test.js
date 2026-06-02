@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, generateSettlementPlan } from './calculations.js';
+import { calculateBudgetCollections, calculateDashboard, calculateExpenseShares, calculateFundPool, generateSettlementPlan } from './calculations.js';
 
 const equalExpense = {
   title: 'Snacks',
@@ -118,5 +118,65 @@ assert.equal(collectionSummary.pendingTotal, 8500);
 assert.equal(collectionSummary.participants.find((item) => item.participantId === 'p1').status, 'partially-collected');
 assert.equal(collectionSummary.participants.find((item) => item.participantId === 'p2').expectedAmount, 3000);
 assert.equal(calculateDashboard(budgetCollectionData).budgetCollection.collectedTotal, 1500);
+
+
+
+const fundPoolData = {
+  event: { estimatedBudget: 1000 },
+  participants: [
+    { id: 'p1', name: 'A', emailOrPhone: 'a@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' },
+    { id: 'p2', name: 'B', emailOrPhone: 'b@test.com', attendanceStatus: 'attending', paymentStatus: 'pending' }
+  ],
+  categories: [{ id: 'c-food', name: 'Food', estimatedCost: 1000 }],
+  budgetCollections: [
+    { participantId: 'p1', expectedAmount: 500, payments: [{ id: 'bc1', amount: 500, paidAt: '2026-07-18', mode: 'UPI' }] },
+    { participantId: 'p2', expectedAmount: 500, payments: [{ id: 'bc2', amount: 500, paidAt: '2026-07-18', mode: 'UPI' }] }
+  ],
+  expenses: [
+    {
+      title: 'Pool dinner',
+      amount: 300,
+      categoryId: 'c-food',
+      date: '2026-07-18',
+      paidByParticipantId: 'p1',
+      handledByParticipantId: 'p1',
+      paymentSource: 'pool',
+      participantIds: ['p1', 'p2'],
+      splitMethod: 'equal',
+      customSplits: [],
+      percentageSplits: [],
+      paymentMethod: 'UPI',
+      approvalStatus: 'approved'
+    },
+    {
+      title: 'Personal taxi',
+      amount: 100,
+      categoryId: 'c-food',
+      date: '2026-07-19',
+      paidByParticipantId: 'p2',
+      paymentSource: 'participant',
+      participantIds: ['p1', 'p2'],
+      splitMethod: 'equal',
+      customSplits: [],
+      percentageSplits: [],
+      paymentMethod: 'Cash',
+      approvalStatus: 'approved'
+    }
+  ],
+  fundTransactions: [
+    { id: 'ft1', type: 'reimbursement', amount: 50, participantId: 'p2', date: '2026-07-20', mode: 'UPI' }
+  ],
+  settlements: []
+};
+
+const fundSummary = calculateFundPool(fundPoolData);
+assert.equal(fundSummary.collectedTotal, 1000);
+assert.equal(fundSummary.poolExpenseTotal, 300);
+assert.equal(fundSummary.reimbursementTotal, 50);
+assert.equal(fundSummary.currentBalance, 650);
+const fundDashboard = calculateDashboard(fundPoolData);
+const handlerBalance = fundDashboard.participantBalances.find((balance) => balance.participantId === 'p1');
+assert.equal(handlerBalance.amountPaid, 0, 'Pool expense handler should not receive personal paid credit');
+assert.equal(fundDashboard.fundPool.currentBalance, 650);
 
 console.log('Expense calculation tests passed. Tiny mercy for arithmetic.');

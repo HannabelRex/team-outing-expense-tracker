@@ -105,12 +105,130 @@ export function calculateBudgetCollections(data) {
   };
 }
 
+
+function normalizeFundTransactions(transactions = []) {
+  if (!Array.isArray(transactions)) return [];
+
+  return transactions
+    .map((transaction) => {
+      const type = transaction.type || 'adjustment';
+      const amount = roundMoney(Number(transaction.amount || 0));
+      return {
+        id: transaction.id || '',
+        type,
+        amount,
+        participantId: transaction.participantId || '',
+        mode: transaction.mode || transaction.paymentMode || 'UPI',
+        reference: transaction.reference || '',
+        note: transaction.note || transaction.description || '',
+        date: transaction.date || transaction.paidAt || transaction.createdAt?.slice?.(0, 10) || new Date().toISOString().slice(0, 10),
+        createdAt: transaction.createdAt || null,
+        updatedAt: transaction.updatedAt || null
+      };
+    })
+    .filter((transaction) => Number.isFinite(transaction.amount) && transaction.amount !== 0);
+}
+
+function isPoolExpense(expense = {}) {
+  return expense.paymentSource === 'pool' || expense.paidFromPool === true;
+}
+
+export function calculateFundPool(data) {
+  const budgetCollection = calculateBudgetCollections(data);
+  const participants = Array.isArray(data.participants) ? data.participants : [];
+  const participantMap = new Map(participants.map((participant) => [participant.id, participant]));
+  const expenses = Array.isArray(data.expenses) ? data.expenses : [];
+  const activeExpenses = expenses.filter((expense) => expense.approvalStatus !== 'rejected');
+  const poolExpenses = activeExpenses.filter(isPoolExpense);
+  const personalExpenses = activeExpenses.filter((expense) => !isPoolExpense(expense));
+  const transactions = normalizeFundTransactions(data.fundTransactions);
+
+  const poolExpenseTotal = roundMoney(poolExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+  const personalExpenseTotal = roundMoney(personalExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0));
+  const reimbursementTotal = roundMoney(transactions.filter((item) => item.type === 'reimbursement').reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0));
+  const refundTotal = roundMoney(transactions.filter((item) => item.type === 'refund').reduce((sum, item) => sum + Math.abs(Number(item.amount || 0)), 0));
+  const adjustmentTotal = roundMoney(transactions.filter((item) => item.type === 'adjustment').reduce((sum, item) => sum + Number(item.amount || 0), 0));
+  const currentBalance = roundMoney(Number(budgetCollection.collectedTotal || 0) - poolExpenseTotal - reimbursementTotal - refundTotal + adjustmentTotal);
+
+  const collectionLedger = (budgetCollection.participants || []).flatMap((collection) => (collection.payments || []).map((payment) => ({
+    id: payment.id || `collection-${collection.participantId}-${payment.paidAt}-${payment.amount}`,
+    type: 'collection',
+    direction: 'inflow',
+    date: payment.paidAt || '',
+    amount: roundMoney(Number(payment.amount || 0)),
+    participantId: collection.participantId,
+    participantName: collection.name,
+    mode: payment.mode || '',
+    reference: payment.reference || '',
+    note: 'Participant collection',
+    source: 'budgetCollection'
+  })));
+
+  const expenseLedger = poolExpenses.map((expense) => ({
+    id: expense.id,
+    type: 'pool-expense',
+    direction: 'outflow',
+    date: expense.date || '',
+    amount: roundMoney(Number(expense.amount || 0)),
+    participantId: expense.handledByParticipantId || expense.paidByParticipantId || '',
+    participantName: participantMap.get(expense.handledByParticipantId || expense.paidByParticipantId)?.name || 'Team fund pool',
+    mode: expense.paymentMethod || '',
+    reference: expense.reference || '',
+    note: expense.title || 'Expense paid from pool',
+    source: 'expense',
+    expenseId: expense.id
+  }));
+
+  const transactionLedger = transactions.map((transaction) => {
+    const outflow = transaction.type === 'reimbursement' || transaction.type === 'refund';
+    return {
+      id: transaction.id,
+      type: transaction.type,
+      direction: outflow ? 'outflow' : (Number(transaction.amount || 0) >= 0 ? 'inflow' : 'outflow'),
+      date: transaction.date || '',
+      amount: roundMoney(Math.abs(Number(transaction.amount || 0))),
+      signedAmount: roundMoney(Number(transaction.amount || 0)),
+      participantId: transaction.participantId || '',
+      participantName: participantMap.get(transaction.participantId)?.name || '',
+      mode: transaction.mode || '',
+      reference: transaction.reference || '',
+      note: transaction.note || '',
+      source: 'fundTransaction'
+    };
+  });
+
+  const ledger = [...collectionLedger, ...expenseLedger, ...transactionLedger]
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.id || '').localeCompare(String(a.id || '')));
+
+  return {
+    collectedTotal: budgetCollection.collectedTotal,
+    expectedTotal: budgetCollection.expectedTotal,
+    pendingCollection: budgetCollection.pendingTotal,
+    poolExpenseTotal,
+    personalExpenseTotal,
+    reimbursementTotal,
+    refundTotal,
+    adjustmentTotal,
+    currentBalance,
+    poolExpenseCount: poolExpenses.length,
+    personalExpenseCount: personalExpenses.length,
+    transactions,
+    ledger
+  };
+}
+
 export function validateExpensePayload(expense) {
   const requiredFields = ['title', 'amount', 'categoryId', 'date', 'paidByParticipantId', 'paymentMethod'];
   const missing = requiredFields.filter((field) => expense[field] === undefined || expense[field] === null || expense[field] === '');
 
   if (missing.length > 0) {
     throw new Error(`Missing required field(s): ${missing.join(', ')}.`);
+  }
+
+  const allowedPaymentSources = ['participant', 'pool'];
+  const paymentSource = expense.paymentSource || 'participant';
+  if (!allowedPaymentSources.includes(paymentSource)) {
+    throw new Error(`Unsupported payment source: ${paymentSource}.`);
   }
 
   assertPositiveAmount(expense.amount, 'Expense amount');
@@ -215,10 +333,12 @@ export function calculateDashboard(data, options = {}) {
   }
 
   for (const expense of approvedOrPendingExpenses) {
-    paidTotals.set(
-      expense.paidByParticipantId,
-      roundMoney((paidTotals.get(expense.paidByParticipantId) || 0) + Number(expense.amount || 0))
-    );
+    if (!isPoolExpense(expense)) {
+      paidTotals.set(
+        expense.paidByParticipantId,
+        roundMoney((paidTotals.get(expense.paidByParticipantId) || 0) + Number(expense.amount || 0))
+      );
+    }
 
     const shares = calculateExpenseShares(expense);
     for (const share of shares) {
@@ -294,10 +414,12 @@ export function calculateDashboard(data, options = {}) {
     participantBalances,
     spendingByPaymentMethod,
     budgetCollection: calculateBudgetCollections(data),
+    fundPool: calculateFundPool(data),
     expenses: approvedOrPendingExpenses.map((expense) => ({
       ...expense,
       categoryName: categoryMap.get(expense.categoryId)?.name || 'Uncategorized',
-      paidByName: participantMap.get(expense.paidByParticipantId)?.name || 'Unknown'
+      paidByName: isPoolExpense(expense) ? 'Team Fund Pool' : (participantMap.get(expense.paidByParticipantId)?.name || 'Unknown'),
+      handledByName: participantMap.get(expense.handledByParticipantId || expense.paidByParticipantId)?.name || 'Unknown'
     }))
   };
 }
@@ -384,6 +506,7 @@ export function buildExpenseReport(data) {
       isOverBudget: dashboard.isOverBudget
     },
     budgetCollection: dashboard.budgetCollection,
+    fundPool: dashboard.fundPool,
     categoryWiseExpenses: dashboard.categorySpending,
     participantWiseContribution: dashboard.participantBalances,
     settlementSummary: settlementPlan.settlements,

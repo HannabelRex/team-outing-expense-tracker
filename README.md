@@ -505,3 +505,7 @@ The login screen now uses clearer visual hierarchy for the top heading, field la
 ### Theme picker mobile center hotfix
 
 The **Themes** menu now opens as a centered mobile modal with a soft backdrop, viewport-safe width, and internal scrolling so users can view and select themes without the panel moving outside the mobile screen. Desktop dropdown behavior remains unchanged.
+
+## Phase 19 - Team Fund Pool Ledger
+
+Phase 19 adds a Team Fund Pool Ledger for collection-first outings. Participant collections increase the pool, expenses can be marked as paid from the team fund pool, and pool-paid expenses reduce the available pool balance without giving personal paid-credit to the handler. Admin and Finance users can also record reimbursements, refunds, and adjustments. Dashboard and reports now include fund pool summaries. Budget vs Actual charts now use solid differentiated theme colors instead of striped budget bars.

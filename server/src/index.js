@@ -9,6 +9,7 @@ import {
   buildExpenseReport,
   calculateDashboard,
   calculateBudgetCollections,
+  calculateFundPool,
   generateSettlementPlan,
   toCsv,
   validateExpensePayload,
@@ -101,6 +102,7 @@ function buildEventRecord(input = {}) {
     expenses: Array.isArray(input.expenses) ? input.expenses : [],
     settlements: Array.isArray(input.settlements) ? input.settlements : [],
     budgetCollections: Array.isArray(input.budgetCollections) ? input.budgetCollections : [],
+    fundTransactions: Array.isArray(input.fundTransactions) ? input.fundTransactions : [],
     notifications: Array.isArray(input.notifications) ? input.notifications : [],
     auditLog: Array.isArray(input.auditLog) ? input.auditLog : Array.isArray(input.audit) ? input.audit : []
   };
@@ -116,6 +118,8 @@ function normalizeMultiEventStore(data) {
       categories: data.categories || [],
       expenses: data.expenses || [],
       settlements: data.settlements || [],
+      budgetCollections: data.budgetCollections || [],
+      fundTransactions: data.fundTransactions || [],
       notifications: data.notifications || []
     });
     data.events = [legacyRecord];
@@ -1149,6 +1153,7 @@ function validateRestoreBackupPayload(backup) {
     eventRecord.expenses = Array.isArray(eventRecord.expenses) ? eventRecord.expenses : [];
     eventRecord.settlements = Array.isArray(eventRecord.settlements) ? eventRecord.settlements : [];
     eventRecord.budgetCollections = Array.isArray(eventRecord.budgetCollections) ? eventRecord.budgetCollections : [];
+    eventRecord.fundTransactions = Array.isArray(eventRecord.fundTransactions) ? eventRecord.fundTransactions : [];
     eventRecord.notifications = Array.isArray(eventRecord.notifications) ? eventRecord.notifications : [];
     eventRecord.auditLog = Array.isArray(eventRecord.auditLog) ? eventRecord.auditLog : [];
   }
@@ -1258,6 +1263,7 @@ function buildCleanResetState(currentData, currentUser, backupInfo = {}) {
     expenses: [],
     settlements: [],
     budgetCollections: [],
+    fundTransactions: [],
     notifications: [],
     auditLog: []
   });
@@ -1284,6 +1290,7 @@ function buildCleanResetState(currentData, currentUser, backupInfo = {}) {
       expenses: true,
       settlements: true,
       budgetCollections: true,
+      fundTransactions: true,
       notifications: true,
       invitations: true,
       nonAdminUsers: true,
@@ -1344,6 +1351,11 @@ function categoryLabel(eventRecord, categoryId) {
 
 function assertMemberExpenseParticipant(eventRecord, user, expense) {
   if (user.role !== 'member') return;
+  if (expense.paymentSource === 'pool') {
+    const error = new Error('Members cannot record expenses paid from the team fund pool. Ask Admin or Finance to record pool spending. Annoying, yes, but money likes adult supervision.');
+    error.statusCode = 403;
+    throw error;
+  }
   const paidByParticipant = findById(eventRecord.participants || [], expense.paidByParticipantId);
   if (!participantMatchesUser(paidByParticipant, user)) {
     const error = new Error('Members can only create or update expenses paid by their own participant profile. Match the participant email with your login email. Very picky, yes, but safer.');
@@ -2463,6 +2475,87 @@ app.delete('/api/budget-collections/:participantId/payments/:paymentId', asyncHa
   res.json(calculateBudgetCollections(activeEvent));
 }));
 
+
+app.get('/api/fund-pool', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  await writeStoreIfDirty(data);
+  res.json(calculateFundPool(activeEvent));
+}));
+
+app.post('/api/fund-pool/transactions', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  assertActiveEventEditable(activeEvent);
+
+  const type = String(req.body.type || '').trim();
+  const allowedTypes = ['reimbursement', 'refund', 'adjustment'];
+  if (!allowedTypes.includes(type)) {
+    return res.status(400).json({ error: 'Fund transaction type must be reimbursement, refund, or adjustment.' });
+  }
+  const amount = roundMoney(Number(req.body.amount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Fund transaction amount must be greater than zero.' });
+  }
+  const participantId = req.body.participantId || '';
+  if ((type === 'reimbursement' || type === 'refund') && !findById(activeEvent.participants || [], participantId)) {
+    return res.status(400).json({ error: 'Pick a valid participant for this fund transaction.' });
+  }
+
+  activeEvent.fundTransactions = Array.isArray(activeEvent.fundTransactions) ? activeEvent.fundTransactions : [];
+  const transaction = {
+    id: `ft-${nanoid(8)}`,
+    type,
+    amount,
+    participantId,
+    mode: sanitizeObject(req.body).mode || 'UPI',
+    reference: sanitizeObject(req.body).reference || '',
+    note: sanitizeObject(req.body).note || '',
+    date: req.body.date || new Date().toISOString().slice(0, 10),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  activeEvent.fundTransactions.push(transaction);
+
+  addAuditLog(activeEvent, currentUser, `fund.${type}_recorded`, 'fund', `Recorded fund ${type}.`, {
+    transactionId: transaction.id,
+    type: transaction.type,
+    amount: transaction.amount,
+    participantId: transaction.participantId,
+    participantName: participantLabel(activeEvent, transaction.participantId),
+    mode: transaction.mode,
+    reference: transaction.reference
+  });
+  await writeStore(data);
+  res.status(201).json(calculateFundPool(activeEvent));
+}));
+
+app.delete('/api/fund-pool/transactions/:id', asyncHandler(async (req, res) => {
+  const data = await readStore();
+  normalizeMultiEventStore(data);
+  const currentUser = resolveAppUser(data, req.authUser);
+  requireRole(currentUser, ['admin', 'finance']);
+  const activeEvent = getEventRecordForUser(data, currentUser);
+  assertActiveEventEditable(activeEvent);
+  activeEvent.fundTransactions = Array.isArray(activeEvent.fundTransactions) ? activeEvent.fundTransactions : [];
+  const transaction = requireExistingItem(activeEvent.fundTransactions.find((item) => item.id === req.params.id), 'Fund transaction');
+  activeEvent.fundTransactions = activeEvent.fundTransactions.filter((item) => item.id !== req.params.id);
+  addAuditLog(activeEvent, currentUser, 'fund.transaction_deleted', 'fund', `Deleted fund transaction ${transaction.type}.`, {
+    transactionId: transaction.id,
+    type: transaction.type,
+    amount: transaction.amount,
+    participantId: transaction.participantId,
+    participantName: participantLabel(activeEvent, transaction.participantId)
+  });
+  await writeStore(data);
+  res.json(calculateFundPool(activeEvent));
+}));
+
 app.post('/api/receipts/upload', asyncHandler(async (req, res) => {
   const receipt = await uploadReceiptToSupabase({
     fileName: sanitizeObject(req.body).fileName,
@@ -2499,6 +2592,8 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
     customSplits: req.body.customSplits || [],
     percentageSplits: req.body.percentageSplits || [],
     paymentMethod: req.body.paymentMethod,
+    paymentSource: req.body.paymentSource === 'pool' ? 'pool' : 'participant',
+    handledByParticipantId: req.body.handledByParticipantId || req.body.paidByParticipantId || '',
     notes: req.body.notes || '',
     receipt: req.body.receipt || null,
     approvalStatus: req.body.approvalStatus || 'pending',
@@ -2508,13 +2603,16 @@ app.post('/api/expenses', asyncHandler(async (req, res) => {
   };
 
   validateExpensePayload(expense);
+  if (expense.paymentSource === 'pool') requireRole(currentUser, ['admin', 'finance']);
   assertMemberExpenseParticipant(activeEvent, currentUser, expense);
   activeEvent.expenses.push(expense);
   addAuditLog(activeEvent, currentUser, 'expense.created', 'expense', `Created expense ${expense.title}.`, {
     expenseId: expense.id,
     amount: expense.amount,
     category: categoryLabel(activeEvent, expense.categoryId),
-    paidBy: participantLabel(activeEvent, expense.paidByParticipantId),
+    paidBy: expense.paymentSource === 'pool' ? 'Team Fund Pool' : participantLabel(activeEvent, expense.paidByParticipantId),
+    handledBy: participantLabel(activeEvent, expense.handledByParticipantId || expense.paidByParticipantId),
+    paymentSource: expense.paymentSource || 'participant',
     receiptFileName: expense.receipt?.fileName || ''
   });
   syncSettlements(activeEvent);
@@ -2555,6 +2653,7 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
   const shouldCleanupOldReceipt = Boolean(beforeExpense.receipt) && !sameReceiptReference(beforeExpense.receipt, nextExpense.receipt);
 
   validateExpensePayload(nextExpense);
+  if (nextExpense.paymentSource === 'pool') requireRole(currentUser, ['admin', 'finance']);
   assertMemberExpenseParticipant(activeEvent, currentUser, nextExpense);
   Object.assign(expense, nextExpense);
   addAuditLog(activeEvent, currentUser, req.body.approvalStatus && req.body.approvalStatus !== beforeExpense.approvalStatus ? 'expense.approval_updated' : 'expense.updated', 'expense', `Updated expense ${expense.title}.`, {
@@ -2564,7 +2663,9 @@ app.put('/api/expenses/:id', asyncHandler(async (req, res) => {
     beforeStatus: beforeExpense.approvalStatus,
     afterStatus: expense.approvalStatus,
     beforePaidBy: participantLabel(activeEvent, beforeExpense.paidByParticipantId),
-    afterPaidBy: participantLabel(activeEvent, expense.paidByParticipantId),
+    afterPaidBy: expense.paymentSource === 'pool' ? 'Team Fund Pool' : participantLabel(activeEvent, expense.paidByParticipantId),
+    paymentSource: expense.paymentSource || 'participant',
+    handledBy: participantLabel(activeEvent, expense.handledByParticipantId || expense.paidByParticipantId),
     beforeReceiptFileName: beforeExpense.receipt?.fileName || '',
     afterReceiptFileName: expense.receipt?.fileName || ''
   });
@@ -3218,6 +3319,23 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     ], report.budgetCollection.participants || [], { emptyText: 'No collection records available.' });
   }
 
+  if (report.fundPool) {
+    drawPdfSection(doc, 'Team fund pool ledger');
+    drawKeyValueGrid(doc, [
+      { label: 'Collected into pool', value: serverMoney(report.fundPool.collectedTotal, currency) },
+      { label: 'Spent from pool', value: serverMoney(report.fundPool.poolExpenseTotal, currency) },
+      { label: 'Reimbursed/refunded', value: serverMoney(Number(report.fundPool.reimbursementTotal || 0) + Number(report.fundPool.refundTotal || 0), currency) },
+      { label: 'Current pool balance', value: serverMoney(report.fundPool.currentBalance, currency), danger: Number(report.fundPool.currentBalance || 0) < 0 }
+    ], currency);
+    drawSimpleTable(doc, [
+      { label: 'Date', key: 'date', weight: 1 },
+      { label: 'Type', value: (row) => pdfStatusLabel(row.type), weight: 1.2 },
+      { label: 'Participant/handler', value: (row) => row.participantName || '-', weight: 1.5 },
+      { label: 'Amount', value: (row) => serverMoney(row.amount, currency), weight: 1 },
+      { label: 'Note', value: (row) => row.note || row.reference || '-', weight: 2 }
+    ], report.fundPool.ledger || [], { emptyText: 'No fund ledger entries available.', fontSize: 7.5 });
+  }
+
   drawPdfSection(doc, 'Category-wise expenses');
   drawSimpleTable(doc, [
     { label: 'Category', key: 'name', weight: 2 },
@@ -3251,7 +3369,7 @@ function buildPdfReport(doc, activeEvent, report, generatedBy) {
     { label: 'Date', key: 'date', weight: 1 },
     { label: 'Expense', key: 'title', weight: 2 },
     { label: 'Category', value: (row) => categoryMap.get(row.categoryId) || 'Uncategorized', weight: 1.3 },
-    { label: 'Paid by', value: (row) => participantMap.get(row.paidByParticipantId) || 'Unknown', weight: 1.3 },
+    { label: 'Source', value: (row) => row.paymentSource === 'pool' ? 'Team fund pool' : (participantMap.get(row.paidByParticipantId) || 'Unknown'), weight: 1.3 },
     { label: 'Amount', value: (row) => serverMoney(row.amount, currency), weight: 1 },
     { label: 'Approval', value: (row) => pdfStatusLabel(row.approvalStatus), weight: 1 }
   ], activeEvent.expenses, { emptyText: 'No expenses recorded.', fontSize: 7.5 });
@@ -3330,7 +3448,11 @@ app.get('/api/reports.csv', asyncHandler(async (req, res) => {
       budgetCollectionExpected: collection.expectedAmount ?? '',
       budgetCollectionCollected: collection.collectedAmount ?? '',
       budgetCollectionPending: collection.pendingAmount ?? '',
-      budgetCollectionStatus: collection.status ?? ''
+      budgetCollectionStatus: collection.status ?? '',
+      fundPoolBalance: report.fundPool?.currentBalance ?? '',
+      fundPoolCollected: report.fundPool?.collectedTotal ?? '',
+      fundPoolSpent: report.fundPool?.poolExpenseTotal ?? '',
+      fundPoolReimbursed: report.fundPool?.reimbursementTotal ?? ''
     };
   });
 

@@ -280,6 +280,7 @@ const emptyExpenseForm = {
   categoryId: '',
   date: new Date().toISOString().slice(0, 10),
   paidByParticipantId: '',
+  paymentSource: 'participant',
   participantIds: [],
   splitMethod: 'equal',
   customSplitsText: '',
@@ -310,7 +311,8 @@ function buildDefaultExpenseForm(data, expense = null) {
       amount: String(expense.amount ?? ''),
       categoryId: expense.categoryId || data.categories[0]?.id || '',
       date: expense.date || new Date().toISOString().slice(0, 10),
-      paidByParticipantId: expense.paidByParticipantId || data.participants[0]?.id || '',
+      paidByParticipantId: expense.paidByParticipantId || expense.handledByParticipantId || data.participants[0]?.id || '',
+      paymentSource: expense.paymentSource || 'participant',
       participantIds: expense.participantIds || [],
       splitMethod: expense.splitMethod || 'equal',
       customSplitsText: formatSplitLines(expense.customSplits, 'amount'),
@@ -330,6 +332,7 @@ function buildDefaultExpenseForm(data, expense = null) {
     ...emptyExpenseForm,
     categoryId: data.categories[0]?.id || '',
     paidByParticipantId: data.participants[0]?.id || '',
+    paymentSource: 'participant',
     participantIds: data.participants.filter((p) => p.attendanceStatus !== 'not-attending').map((p) => p.id)
   };
 }
@@ -348,7 +351,9 @@ function buildExpensePayload(form) {
     amount: Number(form.amount),
     receipt: form.receipt || null,
     customSplits: parseSplitText(form.customSplitsText, 'amount'),
-    percentageSplits: parseSplitText(form.percentageSplitsText, 'percentage')
+    percentageSplits: parseSplitText(form.percentageSplitsText, 'percentage'),
+    paymentSource: form.paymentSource || 'participant',
+    handledByParticipantId: form.paymentSource === 'pool' ? form.paidByParticipantId : ''
   };
 
   delete payload.customSplitsText;
@@ -559,7 +564,8 @@ function validateOfflineExpenseDraft(data, payload) {
   if (!payload.title?.trim()) throw new Error('Expense title is required before saving an offline draft. Apparently even chaos needs a label.');
   if (!Number.isFinite(Number(payload.amount)) || Number(payload.amount) <= 0) throw new Error('Expense amount must be greater than zero. Free expenses are called happiness, not accounting.');
   if (!payload.categoryId || !data.categories.some((category) => category.id === payload.categoryId)) throw new Error('Pick a valid category before saving this offline draft.');
-  if (!payload.paidByParticipantId || !data.participants.some((participant) => participant.id === payload.paidByParticipantId)) throw new Error('Pick a valid paid-by participant before saving this offline draft.');
+  if (!payload.paidByParticipantId || !data.participants.some((participant) => participant.id === payload.paidByParticipantId)) throw new Error(payload.paymentSource === 'pool' ? 'Pick a valid handler for this pool expense.' : 'Pick a valid paid-by participant before saving this offline draft.');
+  if (payload.paymentSource === 'pool' && data.currentUser?.role === 'member') throw new Error('Members cannot save team fund pool expenses. Ask Admin or Finance to record spending from the collected pool.');
   if (!Array.isArray(payload.participantIds) || payload.participantIds.length === 0) throw new Error('Select at least one participant involved in the expense.');
   const participantIds = new Set(data.participants.map((participant) => participant.id));
   const missingParticipant = payload.participantIds.find((participantId) => !participantIds.has(participantId));
@@ -1273,6 +1279,17 @@ function Dashboard({ data, activeTheme }) {
         </Section>
       )}
 
+      {dashboard.fundPool && (
+        <Section title="Team fund pool" icon={WalletCards}>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Collected into pool" value={money(dashboard.fundPool.collectedTotal, currency)} helper="From participant collections" />
+            <StatCard label="Spent from pool" value={money(dashboard.fundPool.poolExpenseTotal, currency)} helper={`${dashboard.fundPool.poolExpenseCount || 0} pool expense${(dashboard.fundPool.poolExpenseCount || 0) === 1 ? '' : 's'}`} />
+            <StatCard label="Reimbursed / refunded" value={money(Number(dashboard.fundPool.reimbursementTotal || 0) + Number(dashboard.fundPool.refundTotal || 0), currency)} helper="Paid back from the pool" />
+            <StatCard label="Current pool balance" value={money(dashboard.fundPool.currentBalance, currency)} helper="Available collected money" danger={Number(dashboard.fundPool.currentBalance || 0) < 0} />
+          </div>
+        </Section>
+      )}
+
       {dashboard.isOverBudget && (
         <div className="flex items-center gap-3 rounded-3xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
           <AlertTriangle size={20} />
@@ -1285,19 +1302,13 @@ function Dashboard({ data, activeTheme }) {
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dashboard.categorySpending}>
-                <defs>
-                  <pattern id="dashboardEstimatedPattern" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
-                    <rect width="8" height="8" fill={chartTheme.primary} opacity="0.18" />
-                    <rect width="3" height="8" fill={chartTheme.primary} opacity="0.55" />
-                  </pattern>
-                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
                 <XAxis dataKey="name" {...axisProps} />
                 <YAxis {...axisProps} />
                 <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
                 <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
-                <Bar dataKey="estimatedCost" name="Estimated budget" radius={[8, 8, 0, 0]} fill="url(#dashboardEstimatedPattern)" stroke={chartTheme.primary} strokeWidth={2} />
-                <Bar dataKey="actualCost" name="Actual spend" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} stroke={chartTheme.secondary} strokeWidth={1} />
+                <Bar dataKey="estimatedCost" name="Estimated budget" radius={[8, 8, 0, 0]} fill={chartTheme.primary} stroke={chartTheme.primaryStrong} strokeWidth={1} />
+                <Bar dataKey="actualCost" name="Actual spend" radius={[8, 8, 0, 0]} fill={chartTheme.accent} stroke={chartTheme.accent} strokeWidth={1} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1513,14 +1524,8 @@ function AnalyticsDashboard({ data, activeTheme }) {
                   <YAxis {...axisProps} />
                   <Tooltip formatter={(value) => money(value, currency)} {...tooltipProps} />
                   <Legend wrapperStyle={{ color: chartTheme.axis, fontWeight: 700 }} />
-                  <defs>
-                    <pattern id="analyticsEstimatedPattern" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
-                      <rect width="8" height="8" fill={chartTheme.primary} opacity="0.18" />
-                      <rect width="3" height="8" fill={chartTheme.primary} opacity="0.55" />
-                    </pattern>
-                  </defs>
-                  <Bar dataKey="Estimated" name="Estimated budget" radius={[8, 8, 0, 0]} fill="url(#analyticsEstimatedPattern)" stroke={chartTheme.primary} strokeWidth={2} />
-                  <Bar dataKey="Actual" name="Actual spend" radius={[8, 8, 0, 0]} fill={chartTheme.secondary} stroke={chartTheme.secondary} strokeWidth={1} />
+                  <Bar dataKey="Estimated" name="Estimated budget" radius={[8, 8, 0, 0]} fill={chartTheme.primary} stroke={chartTheme.primaryStrong} strokeWidth={1} />
+                  <Bar dataKey="Actual" name="Actual spend" radius={[8, 8, 0, 0]} fill={chartTheme.accent} stroke={chartTheme.accent} strokeWidth={1} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -2096,6 +2101,7 @@ function BudgetPlanning({ data, reload, setToast, canManageBudget }) {
       </Section>
 
       <BudgetCollectionTracker data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />
+      <TeamFundPool data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />
     </>
   );
 }
@@ -2341,6 +2347,118 @@ function BudgetCollectionTracker({ data, reload, setToast, canManageBudget }) {
   );
 }
 
+
+function fundLedgerLabel(type) {
+  const labels = {
+    collection: 'Collection received',
+    'pool-expense': 'Pool expense',
+    reimbursement: 'Reimbursement',
+    refund: 'Refund',
+    adjustment: 'Adjustment'
+  };
+  return labels[type] || type || 'Ledger entry';
+}
+
+function TeamFundPool({ data, reload, setToast, canManageBudget }) {
+  const currency = data.event.currency;
+  const fundPool = data.dashboard.fundPool || {
+    collectedTotal: 0,
+    poolExpenseTotal: 0,
+    reimbursementTotal: 0,
+    refundTotal: 0,
+    adjustmentTotal: 0,
+    currentBalance: 0,
+    ledger: []
+  };
+  const [form, setForm] = useState({ type: 'reimbursement', participantId: data.participants[0]?.id || '', amount: '', mode: 'UPI', date: new Date().toISOString().slice(0, 10), reference: '', note: '' });
+  const [busy, setBusy] = useState(false);
+
+  async function recordFundTransaction(event) {
+    event.preventDefault();
+    if (!canManageBudget) {
+      setToast('Team fund pool is read-only for members. Ask Admin or Finance to update it.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api('/fund-pool/transactions', { method: 'POST', body: JSON.stringify(form) });
+      setForm((current) => ({ ...current, amount: '', reference: '', note: '' }));
+      setToast('Team fund pool transaction recorded. The money trail is less mysterious now.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteFundTransaction(id) {
+    if (!canManageBudget) {
+      setToast('Team fund pool is read-only for members.');
+      return;
+    }
+    if (!window.confirm('Delete this fund pool transaction?')) return;
+    setBusy(true);
+    try {
+      await api(`/fund-pool/transactions/${id}`, { method: 'DELETE' });
+      setToast('Fund pool transaction deleted. Ledger corrected, reluctantly.');
+      await reload();
+    } catch (err) {
+      showActionError(setToast, err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Section title="Team fund pool ledger" icon={WalletCards}>
+      <div className="mb-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 text-sm text-slate-700">
+        Collections increase the team fund pool. Expenses marked as <span className="font-bold">Paid from team fund pool</span> reduce the pool without giving personal paid-credit to the handler. Personal expenses still flow into normal settlement balances.
+      </div>
+
+      <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Collected into pool" value={money(fundPool.collectedTotal, currency)} helper="From Budget collection tracker" />
+        <StatCard label="Pool expenses" value={money(fundPool.poolExpenseTotal, currency)} helper="Expenses paid using collected money" />
+        <StatCard label="Reimbursed/refunded" value={money(Number(fundPool.reimbursementTotal || 0) + Number(fundPool.refundTotal || 0), currency)} helper="Manual fund outflows" />
+        <StatCard label="Current pool balance" value={money(fundPool.currentBalance, currency)} helper="Collected minus pool spending" danger={Number(fundPool.currentBalance || 0) < 0} />
+      </div>
+
+      {canManageBudget && (
+        <form onSubmit={recordFundTransaction} className="mb-5 grid gap-3 lg:grid-cols-6">
+          <label className="field-label">Type<select className="input" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option value="reimbursement">Reimbursement</option><option value="refund">Refund to participant</option><option value="adjustment">Adjustment</option></select></label>
+          {form.type !== 'adjustment' && <label className="field-label">Participant<select className="input" value={form.participantId} onChange={(e) => setForm({ ...form, participantId: e.target.value })}>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>}
+          <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
+          <label className="field-label">Mode<select className="input" value={form.mode} onChange={(e) => setForm({ ...form, mode: e.target.value })}><option>UPI</option><option>Cash</option><option>Bank transfer</option><option>Card</option><option>Other</option></select></label>
+          <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></label>
+          <label className="field-label">Reference<input className="input" value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="UPI ref / cash note" /></label>
+          <label className="field-label lg:col-span-5">Note<input className="input" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Why this fund transaction was recorded" /></label>
+          <div className="flex items-end"><button className="btn-primary w-full" type="submit" disabled={busy}>Record fund transaction</button></div>
+        </form>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="text-slate-500"><tr><th className="p-3">Date</th><th className="p-3">Type</th><th className="p-3">Participant / handler</th><th className="p-3">Amount</th><th className="p-3">Note</th>{canManageBudget && <th className="p-3">Action</th>}</tr></thead>
+          <tbody>
+            {(fundPool.ledger || []).length === 0 ? (
+              <tr><td className="p-6 text-center text-slate-500" colSpan={canManageBudget ? 6 : 5}>No fund pool activity yet. Record participant collections or mark expenses as paid from the team fund pool.</td></tr>
+            ) : fundPool.ledger.map((entry) => (
+              <tr key={`${entry.source}-${entry.id}`} className="border-t border-slate-100 align-top">
+                <td className="p-3">{entry.date || '-'}</td>
+                <td className="p-3"><span className={entry.direction === 'inflow' ? 'inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200' : 'inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-200'}>{fundLedgerLabel(entry.type)}</span></td>
+                <td className="p-3">{entry.participantName || '-'}</td>
+                <td className={`p-3 font-bold ${entry.direction === 'inflow' ? 'text-emerald-700' : 'text-rose-700'}`}>{entry.direction === 'inflow' ? '+' : '-'}{money(entry.amount, currency)}</td>
+                <td className="p-3 text-slate-600">{entry.note || entry.reference || '-'}</td>
+                {canManageBudget && <td className="p-3">{entry.source === 'fundTransaction' ? <button className="text-xs font-bold text-rose-700" type="button" onClick={() => deleteFundTransaction(entry.id)}>Delete</button> : <span className="text-xs text-slate-400">System</span>}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+  );
+}
+
 function Expenses({ data, reload, setToast, isOnline }) {
   const [form, setForm] = useState(() => buildDefaultExpenseForm(data));
   const [editingExpenseId, setEditingExpenseId] = useState('');
@@ -2357,7 +2475,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
     return data.expenses.map((expense) => ({
       ...expense,
       categoryName: categoryMap.get(expense.categoryId) || 'Uncategorized',
-      paidByName: participantMap.get(expense.paidByParticipantId) || 'Unknown'
+      paidByName: expense.paymentSource === 'pool' ? 'Team Fund Pool' : (participantMap.get(expense.paidByParticipantId) || 'Unknown'),
+      handledByName: participantMap.get(expense.handledByParticipantId || expense.paidByParticipantId) || 'Unknown'
     }));
   }, [data.categories, data.expenses, data.participants]);
 
@@ -2365,7 +2484,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
     return expenseRows.filter((expense) => {
       const matchesQuery = !filters.query || `${expense.title} ${expense.notes}`.toLowerCase().includes(filters.query.toLowerCase());
       const matchesCategory = !filters.categoryId || expense.categoryId === filters.categoryId;
-      const matchesPaidBy = !filters.paidByParticipantId || expense.paidByParticipantId === filters.paidByParticipantId;
+      const matchesPaidBy = !filters.paidByParticipantId || expense.paidByParticipantId === filters.paidByParticipantId || expense.handledByParticipantId === filters.paidByParticipantId;
       const matchesStatus = !filters.approvalStatus || expense.approvalStatus === filters.approvalStatus;
       const matchesFrom = !filters.fromDate || expense.date >= filters.fromDate;
       const matchesTo = !filters.toDate || expense.date <= filters.toDate;
@@ -2655,8 +2774,10 @@ function Expenses({ data, reload, setToast, isOnline }) {
           <label className="field-label">Amount<input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required /></label>
           <label className="field-label">Date<input className="input" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required /></label>
           <label className="field-label">Category<select className="input" value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })} required>{data.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-          <label className="field-label">Paid by<select className="input" value={form.paidByParticipantId} onChange={(e) => setForm({ ...form, paidByParticipantId: e.target.value })} required>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
+          <label className="field-label">Payment source<select className="input" value={form.paymentSource} onChange={(e) => setForm({ ...form, paymentSource: e.target.value })}><option value="participant">Paid by participant personally</option>{data.currentUser?.role !== 'member' && <option value="pool">Paid from team fund pool</option>}</select></label>
+          <label className="field-label">{form.paymentSource === 'pool' ? 'Handled by' : 'Paid by'}<select className="input" value={form.paidByParticipantId} onChange={(e) => setForm({ ...form, paidByParticipantId: e.target.value })} required>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select></label>
           <label className="field-label">Payment method<select className="input" value={form.paymentMethod} onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}><option>UPI</option><option>Card</option><option>Cash</option><option>Bank transfer</option><option>Corporate card</option></select></label>
+          {form.paymentSource === 'pool' && <div className="lg:col-span-3 rounded-2xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200">This expense will reduce the collected team fund pool and will not give personal paid-credit to the handler.</div>}
           <label className="field-label">Split method<select className="input" value={form.splitMethod} onChange={(e) => setForm({ ...form, splitMethod: e.target.value })}><option value="equal">Equal among selected</option><option value="selected">Selected participants</option><option value="custom">Custom amount</option><option value="percentage">Percentage</option></select></label>
 
           <div className="field-label">
@@ -2732,7 +2853,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
                         <p className="font-black text-slate-950">{draft.payload?.title || 'Untitled expense'}</p>
                         <span className={draftStatusBadge(draft.status)}>{draft.status || 'waiting'}</span>
                       </div>
-                      <p className="mt-1 text-sm text-slate-600">{money(draft.payload?.amount || 0, currency)} · {category} · Paid by {paidBy}</p>
+                      <p className="mt-1 text-sm text-slate-600">{money(draft.payload?.amount || 0, currency)} · {category} · {draft.payload?.paymentSource === 'pool' ? 'From team fund pool' : `Paid by ${paidBy}`}</p>
                       {(draft.offlineReceipt || draft.uploadedReceipt || draft.payload?.receipt) && (
                         <p className="mt-1 text-xs font-semibold text-slate-600">
                           Receipt: {(draft.payload?.receipt || draft.uploadedReceipt || draft.offlineReceipt)?.fileName || 'Attached receipt'}
@@ -2759,7 +2880,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
         <div className="mb-4 grid gap-3 lg:grid-cols-7">
           <label className="relative lg:col-span-2"><Search className="absolute left-3 top-3 text-slate-400" size={16} /><input className="input pl-10" placeholder="Search expenses" value={filters.query} onChange={(e) => setFilters({ ...filters, query: e.target.value })} /></label>
           <select className="input" value={filters.categoryId} onChange={(e) => setFilters({ ...filters, categoryId: e.target.value })}><option value="">All categories</option>{data.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
-          <select className="input" value={filters.paidByParticipantId} onChange={(e) => setFilters({ ...filters, paidByParticipantId: e.target.value })}><option value="">Paid by anyone</option>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select>
+          <select className="input" value={filters.paidByParticipantId} onChange={(e) => setFilters({ ...filters, paidByParticipantId: e.target.value })}><option value="">Paid/handled by anyone</option>{data.participants.map((participant) => <option key={participant.id} value={participant.id}>{participant.name}</option>)}</select>
           <select className="input" value={filters.approvalStatus} onChange={(e) => setFilters({ ...filters, approvalStatus: e.target.value })}><option value="">Any status</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
           <input className="input" type="date" value={filters.fromDate} onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })} />
           <input className="input" type="date" value={filters.toDate} onChange={(e) => setFilters({ ...filters, toDate: e.target.value })} />
@@ -2774,7 +2895,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
                 <tr className="text-left text-slate-500">
                   <th className="p-3">Expense</th>
                   <th className="p-3">Category</th>
-                  <th className="p-3">Paid by</th>
+                  <th className="p-3">Source / handler</th>
                   <th className="p-3">Amount</th>
                   <th className="p-3">Status</th>
                   <th className="p-3">Actions</th>
@@ -2785,7 +2906,7 @@ function Expenses({ data, reload, setToast, isOnline }) {
                   <tr key={expense.id} className="border-t border-slate-100 align-top">
                     <td className="p-3"><p className="font-bold text-slate-900">{expense.title}</p><p className="text-xs text-slate-500">{expense.date} · {expense.paymentMethod} · {expense.splitMethod}</p>{expense.receipt && <p className="mt-1 text-xs text-slate-500">Receipt: <a className="font-semibold text-slate-800 underline" href={expense.receipt.url} target="_blank" rel="noreferrer">{expense.receipt.fileName}</a></p>}</td>
                     <td className="p-3">{expense.categoryName}</td>
-                    <td className="p-3">{expense.paidByName}</td>
+                    <td className="p-3">{expense.paymentSource === 'pool' ? <><span className="font-bold text-emerald-700">Team fund pool</span><p className="text-xs text-slate-500">Handled by {expense.handledByName}</p></> : expense.paidByName}</td>
                     <td className="p-3 font-bold">{money(expense.amount, currency)}</td>
                     <td className="p-3"><span className={statusBadge(expense.approvalStatus)}>{expense.approvalStatus}</span></td>
                     <td className="p-3">
