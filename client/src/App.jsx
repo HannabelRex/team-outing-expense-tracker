@@ -458,6 +458,14 @@ function browserIsOnline() {
   return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
 }
 
+function shouldRetainMobileSession() {
+  if (typeof window === 'undefined') return false;
+  const standaloneMode = window.matchMedia?.('(display-mode: standalone)')?.matches || window.navigator?.standalone === true;
+  const narrowTouchScreen = window.matchMedia?.('(max-width: 767px)')?.matches && window.matchMedia?.('(pointer: coarse)')?.matches;
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(window.navigator?.userAgent || '');
+  return Boolean(standaloneMode || narrowTouchScreen || mobileUserAgent);
+}
+
 function decodeJwtPayload(token = '') {
   try {
     const payload = String(token).split('.')[1];
@@ -700,6 +708,7 @@ function readLastSessionActivity() {
 }
 
 function isSessionTimedOut() {
+  if (shouldRetainMobileSession()) return false;
   const lastActivity = readLastSessionActivity();
   if (!lastActivity) return false;
   return Date.now() - lastActivity > SESSION_TIMEOUT_MS;
@@ -1498,9 +1507,28 @@ function Dashboard({ data, activeTheme }) {
           ? { title: 'Close final items', body: `${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'} still need final refund/collection closure.`, tone: 'purple', icon: CheckCircle2 }
           : { title: 'Export final report', body: 'The outing money flow looks closed. Export the report for records.', tone: 'emerald', icon: FileText };
 
+  const mobileHealthTitle = dashboard.isOverBudget
+    ? 'Action needed'
+    : pendingExpenses.length > 0 || pendingCollection > 0 || poolBalance < 0
+      ? 'Needs review'
+      : 'Healthy outing';
+  const mobileHealthTone = dashboard.isOverBudget || poolBalance < 0 ? 'danger' : pendingExpenses.length > 0 || pendingCollection > 0 ? 'warning' : 'healthy';
+
   return (
     <div className="space-y-6">
-      <div className={`rounded-[2rem] border p-5 shadow-soft ${dashboard.isOverBudget ? 'border-rose-200 bg-rose-50' : 'border-blue-100 bg-white'}`}>
+      <div className={`mobile-event-health-card ${mobileHealthTone}`}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="mobile-event-health-icon">
+            {mobileHealthTone === 'danger' ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-black text-slate-950">{mobileHealthTitle}</p>
+            <p className="truncate text-[0.7rem] font-bold text-slate-500">Budget {budgetUsedPercent.toFixed(0)}% · Pool {money(poolBalance, currency)} · {pendingExpenses.length} pending</p>
+          </div>
+        </div>
+      </div>
+
+      <div className={`desktop-event-health-card rounded-[2rem] border p-5 shadow-soft ${dashboard.isOverBudget ? 'border-rose-200 bg-rose-50' : 'border-blue-100 bg-white'}`}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-4">
             <span className="rounded-2xl p-3 text-white shadow-md" style={{ background: chartTheme.primary }}>
@@ -2753,7 +2781,7 @@ function TeamFundPool({ data, reload, setToast, canManageBudget }) {
   );
 }
 
-function Expenses({ data, reload, setToast, isOnline }) {
+function Expenses({ data, reload, setToast, isOnline, focusAddExpenseSignal = 0 }) {
   const [form, setForm] = useState(() => buildDefaultExpenseForm(data));
   const [editingExpenseId, setEditingExpenseId] = useState('');
   const [filters, setFilters] = useState({ query: '', categoryId: '', paidByParticipantId: '', approvalStatus: '', fromDate: '', toDate: '' });
@@ -2816,6 +2844,17 @@ function Expenses({ data, reload, setToast, isOnline }) {
       syncOfflineDrafts({ automatic: true });
     }
   }, [isOnline, data.activeEventId]);
+
+  useEffect(() => {
+    if (!focusAddExpenseSignal) return;
+    setEditingExpenseId('');
+    setForm(buildDefaultExpenseForm(data));
+    window.setTimeout(() => {
+      const section = document.getElementById('add-expense-section');
+      section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      section?.querySelector('input, select, textarea, button')?.focus?.({ preventScroll: true });
+    }, 80);
+  }, [focusAddExpenseSignal, data.activeEventId]);
 
   function refreshOfflineDrafts() {
     setOfflineDrafts(eventOfflineExpenseDrafts(data));
@@ -3136,7 +3175,8 @@ function Expenses({ data, reload, setToast, isOnline }) {
 
   return (
     <div className="space-y-6">
-      <Section title={editingExpenseId ? 'Edit expense' : 'Record an expense'} icon={Receipt} action={editingExpenseId && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
+      <div id="add-expense-section" className="add-expense-anchor">
+        <Section title={editingExpenseId ? 'Edit expense' : 'Record an expense'} icon={Receipt} action={editingExpenseId && <button className="btn-ghost" type="button" onClick={resetForm}><X size={15} /> Cancel edit</button>}>
         {expensesLockedByClaim && <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">Expenses are locked because the company claim “{companyClaims.lockedClaimTitle || 'Company claim'}” is {claimStatusLabel(companyClaims.lockedClaimStatus || 'submitted')}. Reopen it from the Claims tab before adding, editing, approving, rejecting, or deleting expenses.</div>}
         {!isOnline && <div className="mb-4 rounded-2xl bg-amber-50 p-3 text-sm font-semibold text-amber-900 ring-1 ring-amber-200">Offline mode: new expenses and receipt files are saved as local drafts and will sync after reconnecting. Existing expense edits still wait for the server, because reality insists.</div>}
         <form onSubmit={saveExpense} className="grid gap-4 lg:grid-cols-3">
@@ -3227,8 +3267,9 @@ function Expenses({ data, reload, setToast, isOnline }) {
           <label className="field-label lg:col-span-3">Notes<textarea className="input min-h-24" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700"><input type="checkbox" checked={form.isRecurring} onChange={(e) => setForm({ ...form, isRecurring: e.target.checked })} /> Recurring/shared expense</label>
           <div className="lg:col-span-3"><button className="btn-primary" type="submit" disabled={busy || poolExpenseExceedsBalance || expensesLockedByClaim}>{editingExpenseId ? <Save size={16} /> : <Plus size={16} />} {!isOnline && !editingExpenseId ? 'Save offline draft' : editingExpenseId ? 'Update expense' : 'Save expense'}</button></div>
-        </form>
-      </Section>
+          </form>
+        </Section>
+      </div>
 
       <Section title="Offline expense drafts" icon={Smartphone} action={offlineDrafts.length > 0 && <button className="btn-ghost" type="button" onClick={() => syncOfflineDrafts()} disabled={!isOnline || syncingDrafts}>{syncingDrafts ? <RefreshCw size={15} /> : <UploadCloud size={15} />} Sync now</button>}>
         <div className="mb-4 rounded-3xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200">
@@ -5538,6 +5579,12 @@ function AppShell() {
     setToast('Signed out. The app will now stop trusting you, professionally.');
   }
 
+  function openMobileAddExpense() {
+    setMobileMoreOpen(false);
+    setActiveTab('expenses');
+    setExpenseShortcutSignal(Date.now());
+  }
+
   async function reload({ useImmediateCache = true } = {}) {
     const cachedBootstrap = readCachedBootstrap(session);
     const canUseCachedBootstrap = Boolean(cachedBootstrap);
@@ -5724,6 +5771,7 @@ function AppShell() {
   const activeTheme = useMemo(() => getThemeByKey(themeKey), [themeKey]);
   const themeVars = useMemo(() => buildThemeVars(activeTheme), [activeTheme]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [expenseShortcutSignal, setExpenseShortcutSignal] = useState(0);
 
   function changeTheme(nextThemeKey) {
     const nextTheme = getThemeByKey(nextThemeKey);
@@ -5873,7 +5921,7 @@ function AppShell() {
               <ThemePicker activeThemeKey={themeKey} onThemeChange={changeTheme} />
               <InstallAppButton setToast={setToast} />
               <button className="app-header-action rounded-2xl px-4 py-2 font-bold" onClick={reload} type="button"><RefreshCw className="inline" size={16} /> Refresh</button>
-              <button className="app-header-action rounded-2xl px-4 py-2 font-bold" onClick={logout} type="button"><LogOut className="inline" size={16} /> Sign out</button>
+              <button className="app-header-action app-sign-out-action rounded-2xl px-4 py-2 font-bold" onClick={logout} type="button"><LogOut className="inline" size={16} /> Sign out</button>
             </div>
           </div>
         </div>
@@ -5927,8 +5975,17 @@ function AppShell() {
                 </button>
               ))}
             </div>
+            <button className="mobile-more-signout" type="button" onClick={logout}>
+              <LogOut size={15} /> Sign out from this device
+            </button>
           </div>
         </>
+      )}
+
+      {hasAssignedEvent && activeTab !== 'expenses' && !mobileMoreOpen && (
+        <button className="mobile-expense-fab md:hidden" type="button" onClick={openMobileAddExpense} aria-label="Add expense">
+          <Plus size={26} strokeWidth={3} />
+        </button>
       )}
 
       <NotificationInbox
@@ -5951,7 +6008,7 @@ function AppShell() {
         {activeTab === 'event' && <EventSetup data={data} reload={reload} setToast={setToast} canManageEventSetup={canManageEventSetup} />}
         {activeTab === 'participants' && <Participants data={data} reload={reload} setToast={setToast} canManageParticipants={canManageParticipants} />}
         {activeTab === 'budget' && <BudgetPlanning data={data} reload={reload} setToast={setToast} canManageBudget={canManageBudget} />}
-        {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} />}
+        {activeTab === 'expenses' && <Expenses data={data} reload={reload} setToast={setToast} isOnline={isOnline} focusAddExpenseSignal={expenseShortcutSignal} />}
         {activeTab === 'settlements' && <Settlements data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'claims' && <Claims data={data} reload={reload} setToast={setToast} />}
         {activeTab === 'itinerary' && <ItineraryPlanner data={data} reload={reload} setToast={setToast} />}
