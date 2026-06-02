@@ -121,6 +121,25 @@ assert.equal(collectionSummary.participants.find((item) => item.participantId ==
 assert.equal(calculateDashboard(budgetCollectionData).budgetCollection.collectedTotal, 1500);
 
 
+const roundedCollectionData = {
+  event: { estimatedBudget: 0 },
+  participants: [
+    { id: 'rp1', name: 'Round A', emailOrPhone: 'a@test.com' },
+    { id: 'rp2', name: 'Round B', emailOrPhone: 'b@test.com' },
+    { id: 'rp3', name: 'Round C', emailOrPhone: 'c@test.com' }
+  ],
+  categories: [{ id: 'c-round', name: 'Rounded split', estimatedCost: 17307.69 }],
+  expenses: [],
+  settlements: [],
+  budgetCollections: []
+};
+
+const roundedCollectionSummary = calculateBudgetCollections(roundedCollectionData);
+assert.equal(roundedCollectionSummary.suggestedPerParticipant, 5800);
+assert.equal(roundedCollectionSummary.expectedTotal, 17400);
+assert.equal(roundedCollectionSummary.participants[0].expectedAmount, 5800);
+
+
 
 const fundPoolData = {
   event: { estimatedBudget: 1000 },

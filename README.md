@@ -522,3 +522,7 @@ The **Themes** menu now opens as a centered mobile modal with a soft backdrop, v
 ## Phase 19 - Team Fund Pool Ledger
 
 Phase 19 adds a Team Fund Pool Ledger for collection-first outings. Participant collections increase the pool, expenses can be marked as paid from the team fund pool, and pool-paid expenses reduce the available pool balance without giving personal paid-credit to the handler. Admin and Finance users can also record reimbursements, refunds, and adjustments. Dashboard and reports now include fund pool summaries. Budget vs Actual charts now use solid differentiated theme colors instead of striped budget bars.
+
+### Budget collection rounding hotfix
+
+Budget collection suggestions are now rounded up to the nearest 100. For example, if the raw split is `INR 5,769.23`, the suggested collection becomes `INR 5,800`. This keeps participant collection amounts clean and avoids decimal collection requests. Custom expected collection amounts are preserved.

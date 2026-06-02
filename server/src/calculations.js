@@ -1,8 +1,15 @@
 const MONEY_DECIMALS = 2;
 const EPSILON = 0.01;
+const COLLECTION_ROUNDING_UNIT = 100;
 
 export function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+export function roundCollectionAmount(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return 0;
+  return Math.ceil(numericValue / COLLECTION_ROUNDING_UNIT) * COLLECTION_ROUNDING_UNIT;
 }
 
 export function calculatePlannedBudget(data = {}) {
@@ -66,7 +73,7 @@ export function calculateBudgetCollections(data) {
   const plannedBudget = calculatePlannedBudget(data);
   const totalBudget = plannedBudget;
   const collectionBasis = plannedBudget;
-  const suggestedPerParticipant = participants.length > 0 ? roundMoney(collectionBasis / participants.length) : 0;
+  const suggestedPerParticipant = participants.length > 0 ? roundCollectionAmount(collectionBasis / participants.length) : 0;
 
   const participantsCollection = participants.map((participant) => {
     const stored = collectionMap.get(participant.id) || {};

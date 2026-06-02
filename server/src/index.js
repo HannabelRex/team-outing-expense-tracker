@@ -11,6 +11,7 @@ import {
   calculateBudgetCollections,
   calculateFundPool,
   calculatePlannedBudget,
+  roundCollectionAmount,
   generateSettlementPlan,
   toCsv,
   validateExpensePayload,
@@ -276,7 +277,7 @@ function syncSettlements(eventRecord) {
 function getSuggestedCollectionAmount(eventRecord) {
   const participants = Array.isArray(eventRecord.participants) ? eventRecord.participants : [];
   const collectionBasis = syncEventBudgetFromCategories(eventRecord);
-  return participants.length > 0 ? roundMoney(collectionBasis / participants.length) : 0;
+  return participants.length > 0 ? roundCollectionAmount(collectionBasis / participants.length) : 0;
 }
 
 function ensureBudgetCollectionRecords(eventRecord, { forceSuggested = false } = {}) {
