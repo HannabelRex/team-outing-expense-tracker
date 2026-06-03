@@ -1466,7 +1466,9 @@ function Dashboard({ data, activeTheme }) {
   const fundPool = dashboard.fundPool || {};
   const companyClaims = dashboard.companyClaims || {};
   const itinerarySummary = dashboard.itinerarySummary || { items: data.itinerary || [], todayItems: [], total: 0, completed: 0, progressPercent: 0 };
-  const pendingExpenses = (data.expenses || []).filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
+  const participants = Array.isArray(data.participants) ? data.participants : [];
+  const eventExpenses = Array.isArray(data.expenses) ? data.expenses : [];
+  const pendingExpenses = eventExpenses.filter((expense) => (expense.approvalStatus || 'pending') === 'pending');
 
   const totalBudget = Number(dashboard.totalBudget || 0);
   const totalSpent = Number(dashboard.totalSpent || 0);
@@ -1484,35 +1486,146 @@ function Dashboard({ data, activeTheme }) {
   const budgetUsedPercent = percentValue(totalSpent, totalBudget);
   const collectionPercent = percentValue(collectedTotal, expectedTotal);
   const poolUsagePercent = percentValue(poolSpent, collectedTotal);
+  const participantCount = participants.length || Number(collection.participantCount || 0);
+  const hasBudget = totalBudget > 0;
+  const hasExpenses = eventExpenses.length > 0;
+  const hasCollectionsStarted = collectedTotal > 0;
+  const hasFinancialActivity = hasBudget || hasExpenses || hasCollectionsStarted || poolSpent > 0 || companyReceived > 0 || closureRows.length > 0;
+  const officialExpenses = eventExpenses.filter((expense) => !expense.isPersonalExpense && !isPersonalCategoryId(expense.categoryId) && expense.categoryName !== PERSONAL_CATEGORY_NAME);
+  const approvedOfficialExpenses = officialExpenses.filter((expense) => (expense.approvalStatus || 'pending') === 'approved');
+  const missingApprovedReceipts = approvedOfficialExpenses.filter((expense) => !expense.receipt).length;
+  const pendingSettlementCount = (Array.isArray(data.settlements) ? data.settlements : []).filter((settlement) => {
+    const amount = Number(settlement.amount || 0);
+    const paidAmount = Number(settlement.paidAmount || 0);
+    return amount > 0 && paidAmount < amount;
+  }).length;
+  const openClaimCount = (companyClaims.claims || []).filter((claim) => ['submitted', 'approved', 'partially-received'].includes(claim.status)).length;
 
-  const budgetMessage = dashboard.isOverBudget
-    ? `Over budget by ${money(Math.abs(remainingBudget), currency)}`
-    : `Within budget by ${money(remainingBudget, currency)}`;
-  const collectionMessage = pendingCollection > 0
-    ? `${money(pendingCollection, currency)} still to collect`
-    : 'Collection complete';
-  const closureMessage = closureRows.length > 0
-    ? closurePendingCount > 0
-      ? `Final closure pending for ${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'}`
-      : 'Final closure complete'
-    : 'Final closure not calculated yet';
+  const budgetMessage = !hasBudget
+    ? 'Budget not planned yet'
+    : dashboard.isOverBudget
+      ? `Over budget by ${money(Math.abs(remainingBudget), currency)}`
+      : `Within budget by ${money(remainingBudget, currency)}`;
+  const collectionMessage = !hasBudget
+    ? 'Collection waits for budget setup'
+    : expectedTotal <= 0 && !hasCollectionsStarted
+      ? 'Collection not started yet'
+      : pendingCollection > 0
+        ? `${money(pendingCollection, currency)} still to collect`
+        : 'Collection complete';
+  const closureMessage = !hasFinancialActivity || !hasExpenses
+    ? 'Final closure comes after expenses'
+    : closureRows.length > 0
+      ? closurePendingCount > 0
+        ? `Final closure pending for ${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'}`
+        : 'Final closure complete'
+      : 'Final closure not calculated yet';
 
-  const nextAction = pendingExpenses.length > 0
-    ? { title: 'Review pending expenses', body: `${pendingExpenses.length} expense${pendingExpenses.length === 1 ? '' : 's'} waiting for approval.`, tone: 'amber', icon: Receipt }
-    : pendingCollection > 0
-      ? { title: 'Record pending collections', body: `${money(pendingCollection, currency)} is still pending from participants.`, tone: 'rose', icon: WalletCards }
-      : closureRows.length === 0
-        ? { title: 'Calculate final closure', body: 'Collections and pool spending are ready for final refund/collect calculation.', tone: 'blue', icon: CheckCircle2 }
-        : closurePendingCount > 0
-          ? { title: 'Close final items', body: `${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'} still need final refund/collection closure.`, tone: 'purple', icon: CheckCircle2 }
-          : { title: 'Export final report', body: 'The outing money flow looks closed. Export the report for records.', tone: 'emerald', icon: FileText };
+  const nextAction = participantCount === 0
+    ? {
+      title: 'Add participants',
+      body: 'Add or invite the people joining this outing before planning collections and expenses.',
+      tone: 'blue',
+      icon: Users,
+      chips: ['No participants yet', 'Setup stage', 'Start here']
+    }
+    : !hasBudget
+      ? {
+        title: 'Set up event budget',
+        body: 'Add Budget tab categories so collections, pool usage, and reports can work correctly.',
+        tone: 'blue',
+        icon: WalletCards,
+        chips: [`${participantCount} participant${participantCount === 1 ? '' : 's'}`, 'Budget needed', 'No report yet']
+      }
+      : expectedTotal > 0 && !hasCollectionsStarted
+        ? {
+          title: 'Start participant collection',
+          body: `Record the first contribution toward the ${money(expectedTotal, currency)} expected collection.`,
+          tone: 'emerald',
+          icon: WalletCards,
+          chips: [`Expected ${money(expectedTotal, currency)}`, 'No collection yet', 'Fund pool starts here']
+        }
+        : !hasExpenses
+          ? {
+            title: 'Add first expense',
+            body: 'Start recording outing expenses and attach receipts as the trip spending begins.',
+            tone: 'amber',
+            icon: Plus,
+            chips: ['No expenses yet', `Budget ${money(totalBudget, currency)}`, 'Receipts ready']
+          }
+          : pendingExpenses.length > 0
+            ? {
+              title: 'Review pending expenses',
+              body: `${pendingExpenses.length} expense${pendingExpenses.length === 1 ? '' : 's'} waiting for approval.`,
+              tone: 'amber',
+              icon: Receipt,
+              chips: [`${pendingExpenses.length} pending`, `${eventExpenses.length} total expense${eventExpenses.length === 1 ? '' : 's'}`, 'Approval needed']
+            }
+            : missingApprovedReceipts > 0
+              ? {
+                title: 'Upload missing receipts',
+                body: `${missingApprovedReceipts} approved expense${missingApprovedReceipts === 1 ? '' : 's'} still need receipt evidence before submission.`,
+                tone: 'amber',
+                icon: UploadCloud,
+                chips: [`${missingApprovedReceipts} missing`, 'Evidence needed', 'Before ZIP export']
+              }
+              : pendingCollection > 0
+                ? {
+                  title: 'Record pending collections',
+                  body: `${money(pendingCollection, currency)} is still pending from participants.`,
+                  tone: 'rose',
+                  icon: WalletCards,
+                  chips: [`Pending ${money(pendingCollection, currency)}`, `Collected ${money(collectedTotal, currency)}`, 'Collection follow-up']
+                }
+                : openClaimCount > 0
+                  ? {
+                    title: 'Follow up company claims',
+                    body: `${openClaimCount} company claim${openClaimCount === 1 ? '' : 's'} still need approval or receipt of reimbursement.`,
+                    tone: 'purple',
+                    icon: FileText,
+                    chips: [`${openClaimCount} open claim${openClaimCount === 1 ? '' : 's'}`, 'Claim workflow', 'Finish reimbursement']
+                  }
+                  : pendingSettlementCount > 0
+                    ? {
+                      title: 'Complete settlements',
+                      body: `${pendingSettlementCount} settlement${pendingSettlementCount === 1 ? '' : 's'} still have unpaid balances.`,
+                      tone: 'purple',
+                      icon: CheckCircle2,
+                      chips: [`${pendingSettlementCount} pending`, 'Settlement follow-up', 'Before closure']
+                    }
+                    : closureRows.length === 0
+                      ? {
+                        title: 'Calculate final closure',
+                        body: 'Expenses and collections are ready for final refund or collect calculation.',
+                        tone: 'blue',
+                        icon: CheckCircle2,
+                        chips: ['Closure not calculated', 'Ready to reconcile', 'Final step']
+                      }
+                      : closurePendingCount > 0
+                        ? {
+                          title: 'Close final items',
+                          body: `${closurePendingCount} participant${closurePendingCount === 1 ? '' : 's'} still need final refund or collection closure.`,
+                          tone: 'purple',
+                          icon: CheckCircle2,
+                          chips: [`${closurePendingCount} pending`, `Closure ${closureCompletedCount}/${closureTotalCount || 0}`, 'Finish payouts']
+                        }
+                        : {
+                          title: 'Export final report',
+                          body: 'The outing money flow looks closed. Export the report and receipt ZIP for records.',
+                          tone: 'emerald',
+                          icon: FileText,
+                          chips: ['Closure complete', 'Receipts checked', 'Ready to export']
+                        };
 
-  const mobileHealthTitle = dashboard.isOverBudget
+  const setupNeedsAttention = participantCount === 0 || !hasBudget || !hasExpenses;
+  const mobileHealthTitle = dashboard.isOverBudget || poolBalance < 0
     ? 'Action needed'
-    : pendingExpenses.length > 0 || pendingCollection > 0 || poolBalance < 0
-      ? 'Needs review'
-      : 'Healthy outing';
-  const mobileHealthTone = dashboard.isOverBudget || poolBalance < 0 ? 'danger' : pendingExpenses.length > 0 || pendingCollection > 0 ? 'warning' : 'healthy';
+    : setupNeedsAttention
+      ? 'Setup in progress'
+      : pendingExpenses.length > 0 || pendingCollection > 0 || openClaimCount > 0
+        ? 'Needs review'
+        : 'Healthy outing';
+  const mobileHealthTone = dashboard.isOverBudget || poolBalance < 0 ? 'danger' : setupNeedsAttention || pendingExpenses.length > 0 || pendingCollection > 0 || openClaimCount > 0 ? 'warning' : 'healthy';
 
   return (
     <div className="space-y-6">
@@ -1543,11 +1656,11 @@ function Dashboard({ data, activeTheme }) {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <span className={`rounded-full px-3 py-2 text-xs font-black ${dashboard.isOverBudget ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{dashboard.isOverBudget ? 'Budget exceeded' : 'Within budget'}</span>
-            <span className={`rounded-full px-3 py-2 text-xs font-black ${pendingCollection > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{pendingCollection > 0 ? 'Collection pending' : 'Fully collected'}</span>
-            <span className={`rounded-full px-3 py-2 text-xs font-black ${poolBalance < 0 ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}>{poolBalance < 0 ? 'Pool deficit' : 'Pool available'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${!hasBudget ? 'bg-blue-100 text-blue-700' : dashboard.isOverBudget ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>{!hasBudget ? 'Budget not set' : dashboard.isOverBudget ? 'Budget exceeded' : 'Within budget'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${!hasBudget || (expectedTotal <= 0 && !hasCollectionsStarted) ? 'bg-slate-100 text-slate-700' : pendingCollection > 0 ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{!hasBudget ? 'Collection waiting' : expectedTotal <= 0 && !hasCollectionsStarted ? 'Collection not started' : pendingCollection > 0 ? 'Collection pending' : 'Fully collected'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${poolBalance < 0 ? 'bg-rose-100 text-rose-700' : poolBalance > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-700'}`}>{poolBalance < 0 ? 'Pool deficit' : poolBalance > 0 ? 'Pool available' : 'Pool not funded'}</span>
             <span className={`rounded-full px-3 py-2 text-xs font-black ${companyClaims.expenseLockActive ? 'bg-amber-100 text-amber-700' : companyReceived > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>{companyClaims.expenseLockActive ? 'Claim locked' : companyReceived > 0 ? 'Claim received' : 'No claim received'}</span>
-            <span className={`rounded-full px-3 py-2 text-xs font-black ${closurePendingCount > 0 || closureRows.length === 0 ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'}`}>{closureRows.length === 0 ? 'Closure not calculated' : closurePendingCount > 0 ? 'Closure pending' : 'Closure complete'}</span>
+            <span className={`rounded-full px-3 py-2 text-xs font-black ${!hasExpenses ? 'bg-slate-100 text-slate-700' : closurePendingCount > 0 || closureRows.length === 0 ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'}`}>{!hasExpenses ? 'Closure later' : closureRows.length === 0 ? 'Closure not calculated' : closurePendingCount > 0 ? 'Closure pending' : 'Closure complete'}</span>
           </div>
         </div>
       </div>
@@ -1581,9 +1694,9 @@ function Dashboard({ data, activeTheme }) {
             <h3 className="mt-2 text-2xl font-black text-slate-950">{nextAction.title}</h3>
             <p className="mt-2 text-sm font-semibold text-slate-600">{nextAction.body}</p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold">
-              <span className="rounded-full bg-blue-50 px-3 py-2 text-blue-700">Budget used {budgetUsedPercent.toFixed(1)}%</span>
-              <span className="rounded-full bg-emerald-50 px-3 py-2 text-emerald-700">Collection {collectionPercent.toFixed(1)}%</span>
-              <span className="rounded-full bg-cyan-50 px-3 py-2 text-cyan-700">Pool usage {poolUsagePercent.toFixed(1)}%</span>
+              {(nextAction.chips || [`Budget used ${budgetUsedPercent.toFixed(1)}%`, `Collection ${collectionPercent.toFixed(1)}%`, `Pool usage ${poolUsagePercent.toFixed(1)}%`]).map((chip) => (
+                <span key={chip} className="rounded-full bg-blue-50 px-3 py-2 text-blue-700">{chip}</span>
+              ))}
             </div>
           </div>
         </Section>
