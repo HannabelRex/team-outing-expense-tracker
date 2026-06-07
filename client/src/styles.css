@@ -1071,3 +1071,267 @@ body {
     justify-content: flex-start;
   }
 }
+
+/* Phase 25C: Minimal animated login screen */
+.auth-shell-minimal {
+  min-height: 100dvh;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(59, 130, 246, 0.34), transparent 30%),
+    radial-gradient(circle at 80% 18%, rgba(20, 184, 166, 0.30), transparent 32%),
+    radial-gradient(circle at 50% 92%, rgba(168, 85, 247, 0.22), transparent 32%),
+    linear-gradient(135deg, #020617 0%, #0f172a 52%, #0f766e 100%);
+}
+
+.auth-minimal-stage {
+  isolation: isolate;
+}
+
+.auth-minimal-stage::before {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: min(42rem, 86vw);
+  height: min(42rem, 86vw);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background:
+    conic-gradient(from 90deg, rgba(59, 130, 246, 0.18), rgba(45, 212, 191, 0.24), rgba(168, 85, 247, 0.16), rgba(59, 130, 246, 0.18));
+  filter: blur(0.2px);
+  opacity: 0.62;
+  animation: auth-orbit-slow 18s linear infinite;
+  z-index: -2;
+}
+
+.auth-minimal-stage::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: min(34rem, 78vw);
+  height: min(34rem, 78vw);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 90px rgba(45, 212, 191, 0.18), inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  z-index: -1;
+}
+
+.auth-minimal-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(38rem, 90vw);
+  height: min(38rem, 90vw);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 64%);
+  pointer-events: none;
+  animation: auth-soft-pulse 5.5s ease-in-out infinite;
+}
+
+.auth-minimal-wrap {
+  text-align: center;
+  animation: auth-rise-in 680ms ease both;
+}
+
+.auth-brand-pill {
+  color: rgba(224, 242, 254, 0.95);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 14px 44px rgba(2, 6, 23, 0.22);
+  backdrop-filter: blur(16px);
+}
+
+.auth-form-card-minimal {
+  position: relative;
+  overflow: hidden;
+  transform-origin: center;
+  box-shadow:
+    0 34px 100px rgba(2, 6, 23, 0.42),
+    0 0 0 1px rgba(255, 255, 255, 0.7) inset !important;
+}
+
+.auth-form-card-minimal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg, rgba(37, 99, 235, 0.08), transparent 30%),
+    radial-gradient(circle at 84% 12%, rgba(16, 185, 129, 0.16), transparent 28%);
+  pointer-events: none;
+}
+
+.auth-form-card-minimal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%) rotate(10deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+  animation: auth-glass-sweep 5.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.auth-form-card-minimal > * {
+  position: relative;
+  z-index: 1;
+}
+
+.auth-form-card-minimal .auth-lock-badge {
+  animation: auth-lock-float 4.5s ease-in-out infinite;
+}
+
+.auth-notice {
+  background: linear-gradient(135deg, rgba(236, 254, 255, 0.94), rgba(240, 253, 244, 0.9)) !important;
+}
+
+.auth-mini-meta span {
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.auth-mini-meta span:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+.auth-floating-chip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
+  padding: 0.72rem 1rem;
+  color: rgba(240, 249, 255, 0.94);
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  box-shadow: 0 16px 48px rgba(2, 6, 23, 0.24);
+  backdrop-filter: blur(18px);
+  animation: auth-chip-float 5.6s ease-in-out infinite;
+}
+
+.auth-chip-budget {
+  left: 13%;
+  top: 24%;
+}
+
+.auth-chip-receipts {
+  right: 12%;
+  top: 31%;
+  animation-delay: -1.8s;
+}
+
+.auth-chip-reports {
+  bottom: 20%;
+  left: 18%;
+  animation-delay: -3.2s;
+}
+
+@keyframes auth-orbit-slow {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes auth-soft-pulse {
+  0%, 100% {
+    opacity: 0.58;
+    transform: translate(-50%, -50%) scale(0.98);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1.04);
+  }
+}
+
+@keyframes auth-glass-sweep {
+  0%, 62% {
+    transform: translateX(-130%) rotate(10deg);
+  }
+  100% {
+    transform: translateX(130%) rotate(10deg);
+  }
+}
+
+@keyframes auth-lock-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes auth-chip-float {
+  0%, 100% {
+    transform: translateY(0) translateX(0);
+  }
+  50% {
+    transform: translateY(-10px) translateX(5px);
+  }
+}
+
+@media (max-width: 1024px) {
+  .auth-floating-chip {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .auth-shell-minimal {
+    min-height: 100dvh;
+    padding-top: max(0.9rem, env(safe-area-inset-top));
+    padding-bottom: max(0.9rem, env(safe-area-inset-bottom));
+  }
+
+  .auth-minimal-stage {
+    min-height: calc(100dvh - 2rem) !important;
+  }
+
+  .auth-brand-pill {
+    margin-bottom: 0.85rem;
+    padding-inline: 0.82rem;
+    font-size: 0.64rem;
+    letter-spacing: 0.16em;
+  }
+
+  .auth-form-card-minimal {
+    border-radius: 1.4rem;
+    padding: 1.1rem;
+  }
+
+  .auth-form-card-minimal .auth-lock-badge {
+    height: 3rem;
+    width: 3rem;
+    border-radius: 1.1rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .auth-form-card-minimal .auth-title-gradient {
+    font-size: 1.9rem;
+  }
+
+  .auth-notice {
+    border-radius: 1.1rem;
+    padding: 0.82rem;
+    font-size: 0.8rem;
+    line-height: 1.35rem;
+  }
+
+  .auth-mini-meta {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-minimal-stage::before,
+  .auth-minimal-glow,
+  .auth-form-card-minimal::after,
+  .auth-form-card-minimal .auth-lock-badge,
+  .auth-floating-chip {
+    animation: none !important;
+  }
+}

@@ -1009,25 +1009,40 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
     ? 'You are joining an invited outing. Use the invited email below to create your account or sign in.'
     : 'Track budgets, receipts, collections, approvals, settlements, and reports in one place.';
   return (
-    <main className="auth-shell relative min-h-screen overflow-hidden px-4 py-8 text-slate-950 sm:px-6 lg:px-10">
+    <main className="auth-shell auth-shell-minimal relative min-h-screen overflow-hidden px-4 py-8 text-slate-950 sm:px-6 lg:px-10">
       <div className="auth-aurora auth-aurora-one" />
       <div className="auth-aurora auth-aurora-two" />
       <div className="auth-aurora auth-aurora-three" />
       <div className="auth-grid-overlay" />
+      <div className="auth-minimal-glow" />
 
-      <div className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] w-full max-w-[1760px] items-center gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-        <section className="auth-form-wrap order-1 mx-auto w-full max-w-md lg:mx-0">
-          <div className="auth-form-card rounded-[2rem] border border-white/60 bg-white/78 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
-            <div className="mb-6 flex items-start gap-4">
-              <div className="auth-lock-badge rounded-3xl p-3 text-white shadow-lg"><LockKeyhole size={24} /></div>
-              <div>
-                <p className="auth-kicker text-xs font-black uppercase tracking-[0.22em]">Team Outing Expense Tracker</p>
-                <h1 className="auth-title-gradient mt-1 text-3xl font-black">{title}</h1>
-                <p className="mt-2 text-sm font-bold leading-6 text-slate-600">{modeDescription}</p>
+      <div className="auth-minimal-stage relative z-10 mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-6xl items-center justify-center">
+        <div className="auth-floating-chip auth-chip-budget" aria-hidden="true">
+          <WalletCards size={16} /> Budgets
+        </div>
+        <div className="auth-floating-chip auth-chip-receipts" aria-hidden="true">
+          <Receipt size={16} /> Receipts
+        </div>
+        <div className="auth-floating-chip auth-chip-reports" aria-hidden="true">
+          <FileText size={16} /> Reports
+        </div>
+
+        <section className="auth-form-wrap auth-minimal-wrap mx-auto w-full max-w-[29rem]">
+          <div className="auth-brand-pill mx-auto mb-5 inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-black uppercase tracking-[0.24em]">
+            <ShieldCheck size={15} /> Secure outing workspace
+          </div>
+
+          <div className="auth-form-card auth-form-card-minimal rounded-[2rem] border border-white/60 bg-white/78 p-6 shadow-2xl backdrop-blur-2xl ring-1 ring-slate-200/45 sm:p-7">
+            <div className="mb-6 text-center">
+              <div className="auth-lock-badge mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-3xl p-3 text-white shadow-lg">
+                <LockKeyhole size={25} />
               </div>
+              <p className="auth-kicker text-xs font-black uppercase tracking-[0.22em]">Team Outing Expense Tracker</p>
+              <h1 className="auth-title-gradient mt-2 text-3xl font-black sm:text-4xl">{title}</h1>
+              <p className="mx-auto mt-3 max-w-sm text-sm font-bold leading-6 text-slate-600">{modeDescription}</p>
             </div>
 
-            <div className="mb-5 rounded-3xl border border-cyan-100 bg-cyan-50/90 p-4 text-sm font-bold leading-6 text-cyan-950">
+            <div className="auth-notice mb-5 rounded-3xl border border-cyan-100 bg-cyan-50/90 p-4 text-sm font-bold leading-6 text-cyan-950">
               {inviteNotice}
             </div>
 
@@ -1082,89 +1097,15 @@ function AuthScreen({ onSession, setToast, initialMessage = '' }) {
               </button>
             )}
 
-            <div className="mt-6 grid grid-cols-2 gap-2 text-xs font-black text-slate-600 sm:grid-cols-3">
-              <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Budgets</span>
+            <div className="auth-mini-meta mt-6 grid grid-cols-3 gap-2 text-center text-xs font-black text-slate-600">
+              <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Budget</span>
               <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Receipts</span>
               <span className="rounded-2xl bg-white/70 px-3 py-2 ring-1 ring-slate-200">Reports</span>
             </div>
           </div>
-          <p className="mt-5 text-center text-xs font-bold text-white/75 lg:text-slate-200/75">
+          <p className="mt-5 text-center text-xs font-bold text-white/70">
             Designed, engineered, and deployed by Satheeshkumar Balaji
           </p>
-        </section>
-
-        <section className="auth-showcase order-2 relative overflow-hidden rounded-[2rem] border border-white/35 bg-white/12 p-6 text-white shadow-2xl backdrop-blur-2xl sm:p-8 lg:min-h-[620px] lg:p-10">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.28),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.20),transparent_36%)]" />
-          <div className="auth-route-line" />
-          <div className="relative z-10 flex h-full flex-col justify-between gap-8">
-            <div className="auth-showcase-copy">
-              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/15 px-4 py-2 text-xs font-black uppercase tracking-[0.22em] text-white/85 shadow-lg backdrop-blur-md">
-                <MapPin size={15} /> Outing workspace
-              </div>
-              <h2 className="max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl">
-                Manage every outing expense from one clear workspace.
-              </h2>
-              <p className="mt-5 max-w-2xl text-base font-semibold leading-8 text-white/78 sm:text-lg">
-                Plan the budget, collect participant contributions, approve expenses, track settlements, and export reports without spreadsheet confusion.
-              </p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <WalletCards className="mb-3 text-cyan-100" size={24} />
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Plan</p>
-                <p className="mt-2 text-xl font-black">Budgets and collections</p>
-                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">Set event budgets and record participant payments before the trip.</p>
-              </div>
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <Receipt className="mb-3 text-emerald-100" size={24} />
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Track</p>
-                <p className="mt-2 text-xl font-black">Receipts and approvals</p>
-                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">Members submit expenses while Finance or Admin reviews them.</p>
-              </div>
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <ShieldCheck className="mb-3 text-amber-100" size={24} />
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Settle</p>
-                <p className="mt-2 text-xl font-black">Payments and balances</p>
-                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">See who paid, who owes, and how much remains after settlements.</p>
-              </div>
-              <div className="rounded-3xl border border-white/20 bg-white/12 p-4 backdrop-blur-xl">
-                <FileText className="mb-3 text-sky-100" size={24} />
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-white/60">Report</p>
-                <p className="mt-2 text-xl font-black">Analytics and backups</p>
-                <p className="mt-2 text-sm font-semibold leading-6 text-white/65">Export reports, view analytics, and keep daily backups ready.</p>
-              </div>
-            </div>
-
-            <div className="auth-dashboard-card rounded-[2rem] border border-white/25 bg-slate-950/38 p-5 shadow-2xl backdrop-blur-xl">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/80">Sample outing status</p>
-                  <h3 className="mt-1 text-2xl font-black text-white">Coorg team offsite</h3>
-                </div>
-                <div className="rounded-2xl bg-emerald-400/18 px-3 py-2 text-xs font-black text-emerald-100 ring-1 ring-emerald-200/30">
-                  Ready
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
-                  <p className="text-xs font-bold text-white/60">Collected</p>
-                  <p className="mt-2 text-2xl font-black">72%</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[72%] rounded-full bg-emerald-300" /></div>
-                </div>
-                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
-                  <p className="text-xs font-bold text-white/60">Approved</p>
-                  <p className="mt-2 text-2xl font-black">INR 64K</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[64%] rounded-full bg-cyan-300" /></div>
-                </div>
-                <div className="rounded-2xl bg-white/12 p-4 ring-1 ring-white/15">
-                  <p className="text-xs font-bold text-white/60">Backups</p>
-                  <p className="mt-2 text-2xl font-black">Daily</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/15"><span className="block h-2 w-[88%] rounded-full bg-amber-300" /></div>
-                </div>
-              </div>
-            </div>
-          </div>
         </section>
       </div>
     </main>
