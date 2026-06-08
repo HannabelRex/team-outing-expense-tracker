@@ -1256,6 +1256,50 @@ function EmptyState({ title, body }) {
   );
 }
 
+function MobileLedgerCard({ title, amount, subtitle, meta = [], chips, tone = 'neutral', children, actions }) {
+  const toneClass = tone === 'positive'
+    ? 'mobile-ledger-positive'
+    : tone === 'negative'
+      ? 'mobile-ledger-negative'
+      : tone === 'warning'
+        ? 'mobile-ledger-warning'
+        : 'mobile-ledger-neutral';
+  const visibleMeta = meta.filter(Boolean);
+
+  return (
+    <article className={`mobile-ledger-card ${toneClass}`}>
+      <div className="mobile-ledger-head">
+        <div className="min-w-0">
+          <p className="mobile-ledger-title" title={title}>{title}</p>
+          {subtitle && <p className="mobile-ledger-subtitle">{subtitle}</p>}
+        </div>
+        {amount && <p className="mobile-ledger-amount">{amount}</p>}
+      </div>
+      {visibleMeta.length > 0 && <p className="mobile-ledger-meta">{visibleMeta.join(' · ')}</p>}
+      {chips && <div className="mobile-ledger-chips">{chips}</div>}
+      {children && <div className="mobile-ledger-body">{children}</div>}
+      {actions && <div className="mobile-ledger-actions">{actions}</div>}
+    </article>
+  );
+}
+
+function MobileDetailGrid({ items = [] }) {
+  const visibleItems = items.filter((item) => item && item.value !== undefined && item.value !== null && item.value !== '');
+  if (visibleItems.length === 0) return null;
+
+  return (
+    <div className="mobile-detail-grid">
+      {visibleItems.map((item) => (
+        <div key={item.label} className="mobile-detail-tile">
+          <p>{item.label}</p>
+          <strong className={item.className || ''}>{item.value}</strong>
+          {item.helper && <span>{item.helper}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function NoAssignedDashboard({ data }) {
   return (
     <div className="space-y-6">
@@ -1679,40 +1723,71 @@ function Dashboard({ data, activeTheme }) {
         </Section>
 
         <Section title="Participant balances" icon={Users}>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  <th className="p-3">Participant</th>
-                  <th className="p-3">Paid</th>
-                  <th className="p-3">Owed</th>
-                  {hasSettlementPayments && <th className="p-3">Settlement paid/received</th>}
-                  <th className="p-3">Net after settlements</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dashboard.participantBalances.map((person) => (
-                  <tr key={person.participantId} className="border-t border-slate-100">
-                    <td className="p-3 font-semibold text-slate-800">{person.name}</td>
-                    <td className="p-3">{money(person.amountPaid, currency)}</td>
-                    <td className="p-3">{money(person.amountOwed, currency)}</td>
-                    {hasSettlementPayments && (
-                      <td className="p-3 text-xs text-slate-600">
-                        <div>{Number(person.settlementPaid || 0) > 0 ? `Paid ${money(person.settlementPaid, currency)}` : 'Paid —'}</div>
-                        <div>{Number(person.settlementReceived || 0) > 0 ? `Received ${money(person.settlementReceived, currency)}` : 'Received —'}</div>
-                      </td>
-                    )}
-                    <td className={`p-3 font-bold ${person.netBalance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                      {money(person.netBalance, currency)}
-                      {Number(person.netBalanceBeforeSettlement || 0) !== Number(person.netBalance || 0) && (
-                        <div className="text-xs font-semibold text-slate-400">Before settlement: {money(person.netBalanceBeforeSettlement, currency)}</div>
+          {dashboard.participantBalances.length === 0 ? (
+            <EmptyState title="No participant balances yet" body="Add participants and expenses to see who paid, who owes, and who gets paid back." />
+          ) : (
+            <>
+              <div className="mobile-data-list md:hidden">
+                {dashboard.participantBalances.map((person) => {
+                  const netBalance = Number(person.netBalance || 0);
+                  return (
+                    <MobileLedgerCard
+                      key={`mobile-balance-${person.participantId}`}
+                      title={person.name}
+                      amount={money(netBalance, currency)}
+                      tone={netBalance >= 0 ? 'positive' : 'negative'}
+                      subtitle={netBalance > 0 ? 'Receivable' : netBalance < 0 ? 'Payable' : 'Settled'}
+                      meta={[`Paid ${money(person.amountPaid, currency)}`, `Owes ${money(person.amountOwed, currency)}`]}
+                    >
+                      {hasSettlementPayments && (
+                        <MobileDetailGrid items={[
+                          { label: 'Settlement paid', value: money(person.settlementPaid || 0, currency) },
+                          { label: 'Settlement received', value: money(person.settlementReceived || 0, currency) }
+                        ]} />
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      {Number(person.netBalanceBeforeSettlement || 0) !== Number(person.netBalance || 0) && (
+                        <p className="mobile-ledger-note">Before settlement: {money(person.netBalanceBeforeSettlement, currency)}</p>
+                      )}
+                    </MobileLedgerCard>
+                  );
+                })}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-slate-500">
+                      <th className="p-3">Participant</th>
+                      <th className="p-3">Paid</th>
+                      <th className="p-3">Owed</th>
+                      {hasSettlementPayments && <th className="p-3">Settlement paid/received</th>}
+                      <th className="p-3">Net after settlements</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dashboard.participantBalances.map((person) => (
+                      <tr key={person.participantId} className="border-t border-slate-100">
+                        <td className="p-3 font-semibold text-slate-800">{person.name}</td>
+                        <td className="p-3">{money(person.amountPaid, currency)}</td>
+                        <td className="p-3">{money(person.amountOwed, currency)}</td>
+                        {hasSettlementPayments && (
+                          <td className="p-3 text-xs text-slate-600">
+                            <div>{Number(person.settlementPaid || 0) > 0 ? `Paid ${money(person.settlementPaid, currency)}` : 'Paid —'}</div>
+                            <div>{Number(person.settlementReceived || 0) > 0 ? `Received ${money(person.settlementReceived, currency)}` : 'Received —'}</div>
+                          </td>
+                        )}
+                        <td className={`p-3 font-bold money-nowrap ${person.netBalance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {money(person.netBalance, currency)}
+                          {Number(person.netBalanceBeforeSettlement || 0) !== Number(person.netBalance || 0) && (
+                            <div className="text-xs font-semibold text-slate-400">Before settlement: {money(person.netBalanceBeforeSettlement, currency)}</div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </Section>
       </div>
     </div>
@@ -1952,34 +2027,49 @@ function AnalyticsDashboard({ data, activeTheme }) {
 
       <Section title="Event comparison" icon={CalendarDays}>
         {eventComparison.length === 0 ? <EmptyState title="No events to compare" body="Create more events to compare spending patterns." /> : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  <th className="p-3">Event</th>
-                  <th className="p-3">Status</th>
-                  <th className="p-3">Budget tab total</th>
-                  <th className="p-3">Spent</th>
-                  <th className="p-3">Used</th>
-                  <th className="p-3">Participants</th>
-                  <th className="p-3">Expenses</th>
-                </tr>
-              </thead>
-              <tbody>
-                {eventComparison.map((eventItem) => (
-                  <tr key={eventItem.id} className="border-t border-slate-100">
-                    <td className="p-3 font-bold text-slate-900">{eventItem.name}</td>
-                    <td className="p-3"><span className={statusBadge(eventItem.status)}>{eventItem.status}</span></td>
-                    <td className="p-3">{money(eventItem.estimatedBudget, eventItem.currency || currency)}</td>
-                    <td className="p-3">{money(eventItem.totalSpent, eventItem.currency || currency)}</td>
-                    <td className={`p-3 font-bold ${eventItem.budgetUsed > 100 ? 'text-rose-700' : 'text-slate-700'}`}>{eventItem.budgetUsed.toFixed(1)}%</td>
-                    <td className="p-3">{eventItem.participantCount}</td>
-                    <td className="p-3">{eventItem.expenseCount}</td>
+          <>
+            <div className="mobile-data-list md:hidden">
+              {eventComparison.map((eventItem) => (
+                <MobileLedgerCard
+                  key={`mobile-event-${eventItem.id}`}
+                  title={eventItem.name}
+                  amount={`${eventItem.budgetUsed.toFixed(1)}%`}
+                  tone={eventItem.budgetUsed > 100 ? 'negative' : 'neutral'}
+                  subtitle={eventItem.status}
+                  meta={[`Budget ${money(eventItem.estimatedBudget, eventItem.currency || currency)}`, `Spent ${money(eventItem.totalSpent, eventItem.currency || currency)}`]}
+                  chips={<><span className="mobile-chip">{eventItem.participantCount} people</span><span className="mobile-chip">{eventItem.expenseCount} expenses</span></>}
+                />
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-slate-500">
+                    <th className="p-3">Event</th>
+                    <th className="p-3">Status</th>
+                    <th className="p-3">Budget tab total</th>
+                    <th className="p-3">Spent</th>
+                    <th className="p-3">Used</th>
+                    <th className="p-3">Participants</th>
+                    <th className="p-3">Expenses</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {eventComparison.map((eventItem) => (
+                    <tr key={eventItem.id} className="border-t border-slate-100">
+                      <td className="p-3 font-bold text-slate-900">{eventItem.name}</td>
+                      <td className="p-3"><span className={statusBadge(eventItem.status)}>{eventItem.status}</span></td>
+                      <td className="p-3 money-nowrap">{money(eventItem.estimatedBudget, eventItem.currency || currency)}</td>
+                      <td className="p-3 money-nowrap">{money(eventItem.totalSpent, eventItem.currency || currency)}</td>
+                      <td className={`p-3 font-bold money-nowrap ${eventItem.budgetUsed > 100 ? 'text-rose-700' : 'text-slate-700'}`}>{eventItem.budgetUsed.toFixed(1)}%</td>
+                      <td className="p-3">{eventItem.participantCount}</td>
+                      <td className="p-3">{eventItem.expenseCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Section>
     </div>
@@ -2148,7 +2238,33 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
       </Section>
 
       <Section title="Outing events" icon={CalendarDays}>
-        <div className="overflow-x-auto">
+        <div className="mobile-data-list md:hidden">
+          {events.map((eventItem) => (
+            <MobileLedgerCard
+              key={`mobile-event-setup-${eventItem.id}`}
+              title={eventItem.name}
+              amount={money(eventItem.totalSpent, eventItem.currency || currency)}
+              subtitle={eventItem.id === data.activeEventId ? 'Current event' : eventItem.status}
+              meta={[eventItem.date, eventItem.location, `${eventItem.participantCount} people`, `Budget ${money(eventItem.estimatedBudget, eventItem.currency || currency)}`]}
+              chips={<span className={statusBadge(eventItem.status)}>{eventItem.status}</span>}
+              actions={(
+                <>
+                  {eventItem.id !== data.activeEventId && <button className="btn-ghost" type="button" disabled={busy} onClick={() => onSwitchEvent(eventItem.id)}>Switch</button>}
+                  {eventItem.status === 'archived' || eventItem.status === 'completed' ? (
+                    <button className="btn-ghost" type="button" disabled={busy} onClick={() => updateEventStatus(eventItem.id, 'active')}>Reactivate</button>
+                  ) : (
+                    <>
+                      <button className="btn-ghost" type="button" disabled={busy} onClick={() => updateEventStatus(eventItem.id, 'completed')}>Complete</button>
+                      <button className="btn-ghost" type="button" disabled={busy} onClick={() => updateEventStatus(eventItem.id, 'archived')}>Archive</button>
+                    </>
+                  )}
+                  {eventItem.expenseCount === 0 && events.length > 1 && <button className="btn-ghost text-rose-700" type="button" disabled={busy} onClick={() => deleteDraftEvent(eventItem.id)}>Delete</button>}
+                </>
+              )}
+            />
+          ))}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500">
@@ -2172,8 +2288,8 @@ function EventsConsole({ data, reload, setToast, onSwitchEvent }) {
                   <td className="p-3"><span className={statusBadge(eventItem.status)}>{eventItem.status}</span></td>
                   <td className="p-3">{eventItem.date}</td>
                   <td className="p-3">{eventItem.location}</td>
-                  <td className="p-3">{money(eventItem.estimatedBudget, eventItem.currency || currency)}</td>
-                  <td className="p-3">{money(eventItem.totalSpent, eventItem.currency || currency)}</td>
+                  <td className="p-3 money-nowrap">{money(eventItem.estimatedBudget, eventItem.currency || currency)}</td>
+                  <td className="p-3 money-nowrap">{money(eventItem.totalSpent, eventItem.currency || currency)}</td>
                   <td className="p-3">{eventItem.participantCount}</td>
                   <td className="p-3">
                     <div className="flex flex-wrap gap-2">
@@ -2285,67 +2401,113 @@ function Participants({ data, reload, setToast, canManageParticipants }) {
         </form>
       )}
 
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="text-left text-slate-500">
-              <th className="p-3">Name</th>
-              <th className="p-3">Contact</th>
-              <th className="p-3">Attendance</th>
-              <th className="p-3">Payment</th>
-              {canManageParticipants && <th className="p-3">Actions</th>}
-            </tr>
-          </thead>
-          <tbody>
+      {data.participants.length === 0 ? (
+        <EmptyState title="No participants yet" body="Add participants to start collections, splits, and settlement math. Yes, humans are still required input data." />
+      ) : (
+        <>
+          <div className="mobile-data-list md:hidden">
             {data.participants.map((participant) => (
-              <tr key={participant.id} className="border-t border-slate-100 align-top">
-                {canManageParticipants && editingId === participant.id ? (
+              <MobileLedgerCard
+                key={`mobile-participant-${participant.id}`}
+                title={participant.name}
+                subtitle={participant.emailOrPhone}
+                amount={participant.paymentStatus === 'completed' || participant.paymentStatus === 'settled' ? 'Done' : 'Pending'}
+                tone={participant.paymentStatus === 'completed' || participant.paymentStatus === 'settled' ? 'positive' : participant.paymentStatus === 'partially-paid' ? 'warning' : 'neutral'}
+                chips={<><span className={statusBadge(participant.attendanceStatus)}>{participant.attendanceStatus}</span><span className={statusBadge(participant.paymentStatus)}>{participant.paymentStatus}</span></>}
+                actions={canManageParticipants && editingId !== participant.id && (
                   <>
-                    <td className="p-3"><input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required /></td>
-                    <td className="p-3"><input className="input" value={editForm.emailOrPhone} onChange={(e) => setEditForm({ ...editForm, emailOrPhone: e.target.value })} required /></td>
-                    <td className="p-3">
-                      <select className="input" value={editForm.attendanceStatus} onChange={(e) => setEditForm({ ...editForm, attendanceStatus: e.target.value })}>
-                        <option value="attending">Attending</option>
-                        <option value="tentative">Tentative</option>
-                        <option value="not-attending">Not attending</option>
-                      </select>
-                    </td>
-                    <td className="p-3">
-                      <select className="input" value={editForm.paymentStatus} onChange={(e) => setEditForm({ ...editForm, paymentStatus: e.target.value })}>
-                        <option value="pending">Pending</option>
-                        <option value="partially-paid">Partially paid</option>
-                        <option value="completed">Completed</option>
-                        <option value="settled">Settled</option>
-                      </select>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button className="btn-ghost" type="button" onClick={saveParticipant} disabled={busy}><Save size={15} /> Save</button>
-                        <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
-                      </div>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td className="p-3 font-semibold text-slate-800">{participant.name}</td>
-                    <td className="p-3 text-slate-600">{participant.emailOrPhone}</td>
-                    <td className="p-3"><span className={statusBadge(participant.attendanceStatus)}>{participant.attendanceStatus}</span></td>
-                    <td className="p-3"><span className={statusBadge(participant.paymentStatus)}>{participant.paymentStatus}</span></td>
-                    {canManageParticipants && (
-                      <td className="p-3">
-                        <div className="flex flex-wrap gap-2">
-                          <button className="btn-ghost" onClick={() => startEdit(participant)} type="button"><Pencil size={15} /> Edit</button>
-                          <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
-                        </div>
-                      </td>
-                    )}
+                    <button className="btn-ghost" onClick={() => startEdit(participant)} type="button"><Pencil size={15} /> Edit</button>
+                    <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
                   </>
                 )}
-              </tr>
+              >
+                {canManageParticipants && editingId === participant.id && (
+                  <form onSubmit={saveParticipant} className="mobile-inline-form">
+                    <input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                    <input className="input" value={editForm.emailOrPhone} onChange={(e) => setEditForm({ ...editForm, emailOrPhone: e.target.value })} required />
+                    <select className="input" value={editForm.attendanceStatus} onChange={(e) => setEditForm({ ...editForm, attendanceStatus: e.target.value })}>
+                      <option value="attending">Attending</option>
+                      <option value="tentative">Tentative</option>
+                      <option value="not-attending">Not attending</option>
+                    </select>
+                    <select className="input" value={editForm.paymentStatus} onChange={(e) => setEditForm({ ...editForm, paymentStatus: e.target.value })}>
+                      <option value="pending">Pending</option>
+                      <option value="partially-paid">Partially paid</option>
+                      <option value="completed">Completed</option>
+                      <option value="settled">Settled</option>
+                    </select>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn-primary" type="submit" disabled={busy}><Save size={15} /> Save</button>
+                      <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
+                    </div>
+                  </form>
+                )}
+              </MobileLedgerCard>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500">
+                  <th className="p-3">Name</th>
+                  <th className="p-3">Contact</th>
+                  <th className="p-3">Attendance</th>
+                  <th className="p-3">Payment</th>
+                  {canManageParticipants && <th className="p-3">Actions</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {data.participants.map((participant) => (
+                  <tr key={participant.id} className="border-t border-slate-100 align-top">
+                    {canManageParticipants && editingId === participant.id ? (
+                      <>
+                        <td className="p-3"><input className="input" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required /></td>
+                        <td className="p-3"><input className="input" value={editForm.emailOrPhone} onChange={(e) => setEditForm({ ...editForm, emailOrPhone: e.target.value })} required /></td>
+                        <td className="p-3">
+                          <select className="input" value={editForm.attendanceStatus} onChange={(e) => setEditForm({ ...editForm, attendanceStatus: e.target.value })}>
+                            <option value="attending">Attending</option>
+                            <option value="tentative">Tentative</option>
+                            <option value="not-attending">Not attending</option>
+                          </select>
+                        </td>
+                        <td className="p-3">
+                          <select className="input" value={editForm.paymentStatus} onChange={(e) => setEditForm({ ...editForm, paymentStatus: e.target.value })}>
+                            <option value="pending">Pending</option>
+                            <option value="partially-paid">Partially paid</option>
+                            <option value="completed">Completed</option>
+                            <option value="settled">Settled</option>
+                          </select>
+                        </td>
+                        <td className="p-3">
+                          <div className="flex flex-wrap gap-2">
+                            <button className="btn-ghost" type="button" onClick={saveParticipant} disabled={busy}><Save size={15} /> Save</button>
+                            <button className="btn-ghost" type="button" onClick={() => setEditingId('')}><X size={15} /> Cancel</button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="p-3 font-semibold text-slate-800">{participant.name}</td>
+                        <td className="p-3 text-slate-600">{participant.emailOrPhone}</td>
+                        <td className="p-3"><span className={statusBadge(participant.attendanceStatus)}>{participant.attendanceStatus}</span></td>
+                        <td className="p-3"><span className={statusBadge(participant.paymentStatus)}>{participant.paymentStatus}</span></td>
+                        {canManageParticipants && (
+                          <td className="p-3">
+                            <div className="flex flex-wrap gap-2">
+                              <button className="btn-ghost" onClick={() => startEdit(participant)} type="button"><Pencil size={15} /> Edit</button>
+                              <button className="btn-ghost text-rose-700" onClick={() => deleteParticipant(participant.id)} type="button"><Trash2 size={15} /> Remove</button>
+                            </div>
+                          </td>
+                        )}
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </Section>
   );
 }
@@ -2637,7 +2799,77 @@ function BudgetCollectionTracker({ data, reload, setToast, canManageBudget }) {
         </div>
       )}
 
-      <div className="overflow-x-auto">
+      {collection.participants.length === 0 ? (
+        <EmptyState title="No collection rows yet" body="Add participants first, then refresh the tracker so the app can calculate what to collect." />
+      ) : (
+        <div className="mobile-data-list md:hidden">
+          {collection.participants.map((row) => {
+            const paymentForm = paymentForms[row.participantId] || { amount: '', mode: 'UPI', reference: '', paidAt: new Date().toISOString().slice(0, 10) };
+            const pendingAmount = Math.max(0, Number(row.pendingAmount || 0));
+            return (
+              <MobileLedgerCard
+                key={`mobile-collection-${row.participantId}`}
+                title={row.name}
+                amount={`${money(row.collectedAmount, currency)} / ${money(row.expectedAmount, currency)}`}
+                tone={pendingAmount > 0 ? 'warning' : 'positive'}
+                subtitle={collectionStatusLabel(row.status)}
+                meta={[`Pending ${money(pendingAmount, currency)}`, `Suggested ${money(row.suggestedAmount, currency)}`]}
+                chips={<span className={statusBadge(row.status)}>{collectionStatusLabel(row.status)}</span>}
+              >
+                <MobileDetailGrid items={[
+                  { label: 'Expected', value: money(row.expectedAmount, currency), helper: row.isExpectedCustom ? 'Custom expected' : 'Suggested split' },
+                  { label: 'Collected', value: money(row.collectedAmount, currency), className: 'text-emerald-700' },
+                  { label: 'Pending', value: money(pendingAmount, currency), className: pendingAmount > 0 ? 'text-rose-700' : 'text-emerald-700' }
+                ]} />
+
+                {canManageBudget && editingExpectedId === row.participantId ? (
+                  <form onSubmit={saveExpectedAmount} className="mobile-inline-form">
+                    <input className="input" type="number" min="0" value={expectedAmount} onChange={(e) => setExpectedAmount(e.target.value)} required />
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn-primary" type="submit" disabled={busy}><Save size={15} /> Save expected</button>
+                      <button className="btn-ghost" type="button" onClick={() => setEditingExpectedId('')}><X size={15} /> Cancel</button>
+                    </div>
+                  </form>
+                ) : canManageBudget ? (
+                  <button className="mt-3 text-xs font-black text-blue-700" type="button" onClick={() => startExpectedEdit(row)}>Edit expected amount</button>
+                ) : null}
+
+                {row.payments.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {row.payments.map((payment) => (
+                      <div key={payment.id || `${row.participantId}-${payment.paidAt}-${payment.amount}`} className="mobile-payment-chip">
+                        <div><strong>{money(payment.amount, currency)}</strong> · {payment.mode} · {payment.paidAt}</div>
+                        {payment.reference && <span>{payment.reference}</span>}
+                        {canManageBudget && payment.id && <button type="button" onClick={() => deletePayment(row.participantId, payment.id)}>Delete</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {canManageBudget && (
+                  <form onSubmit={(event) => recordPayment(event, row.participantId)} className="mobile-inline-form mt-3">
+                    <input className="input" type="number" min="0.01" step="0.01" placeholder="Amount collected" value={paymentForm.amount} onChange={(e) => updatePaymentForm(row.participantId, { amount: e.target.value })} required />
+                    <div className="grid gap-2 grid-cols-2">
+                      <select className="input" value={paymentForm.mode} onChange={(e) => updatePaymentForm(row.participantId, { mode: e.target.value })}>
+                        <option>UPI</option>
+                        <option>Cash</option>
+                        <option>Bank transfer</option>
+                        <option>Card</option>
+                        <option>Other</option>
+                      </select>
+                      <input className="input" type="date" value={paymentForm.paidAt} onChange={(e) => updatePaymentForm(row.participantId, { paidAt: e.target.value })} />
+                    </div>
+                    <input className="input" placeholder="Reference / note" value={paymentForm.reference} onChange={(e) => updatePaymentForm(row.participantId, { reference: e.target.value })} />
+                    <button className="btn-primary w-full" type="submit" disabled={busy}>Record collection</button>
+                  </form>
+                )}
+              </MobileLedgerCard>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-left text-sm">
           <thead className="text-slate-500">
             <tr>
@@ -2812,7 +3044,26 @@ function TeamFundPool({ data, reload, setToast, canManageBudget }) {
         </form>
       )}
 
-      <div className="overflow-x-auto">
+      {(fundPool.ledger || []).length === 0 ? (
+        <EmptyState title="No fund pool activity yet" body="Record participant collections or mark expenses as paid from the team fund pool." />
+      ) : (
+        <div className="mobile-data-list md:hidden">
+          {(fundPool.ledger || []).map((entry) => (
+            <MobileLedgerCard
+              key={`mobile-fund-${entry.source}-${entry.id}`}
+              title={fundLedgerLabel(entry.type)}
+              amount={`${entry.direction === 'inflow' ? '+' : '-'}${money(entry.amount, currency)}`}
+              tone={entry.direction === 'inflow' ? 'positive' : 'negative'}
+              subtitle={entry.participantName || 'System ledger'}
+              meta={[entry.date || '-', entry.note || entry.reference || 'No note']}
+              chips={<span className={entry.direction === 'inflow' ? 'mobile-chip mobile-chip-positive' : 'mobile-chip mobile-chip-warning'}>{entry.direction}</span>}
+              actions={canManageBudget && entry.source === 'fundTransaction' && <button className="btn-ghost text-rose-700" type="button" onClick={() => deleteFundTransaction(entry.id)}>Delete</button>}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-left text-sm">
           <thead className="text-slate-500"><tr><th className="p-3">Date</th><th className="p-3">Type</th><th className="p-3">Participant / handler</th><th className="p-3">Amount</th><th className="p-3">Note</th>{canManageBudget && <th className="p-3">Action</th>}</tr></thead>
           <tbody>
@@ -2823,7 +3074,7 @@ function TeamFundPool({ data, reload, setToast, canManageBudget }) {
                 <td className="p-3">{entry.date || '-'}</td>
                 <td className="p-3"><span className={entry.direction === 'inflow' ? 'inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200' : 'inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700 ring-1 ring-amber-200'}>{fundLedgerLabel(entry.type)}</span></td>
                 <td className="p-3">{entry.participantName || '-'}</td>
-                <td className={`p-3 font-bold ${entry.direction === 'inflow' ? 'text-emerald-700' : 'text-rose-700'}`}>{entry.direction === 'inflow' ? '+' : '-'}{money(entry.amount, currency)}</td>
+                <td className={`p-3 font-bold money-nowrap ${entry.direction === 'inflow' ? 'text-emerald-700' : 'text-rose-700'}`}>{entry.direction === 'inflow' ? '+' : '-'}{money(entry.amount, currency)}</td>
                 <td className="p-3 text-slate-600">{entry.note || entry.reference || '-'}</td>
                 {canManageBudget && <td className="p-3">{entry.source === 'fundTransaction' ? <button className="text-xs font-bold text-rose-700" type="button" onClick={() => deleteFundTransaction(entry.id)}>Delete</button> : <span className="text-xs text-slate-400">System</span>}</td>}
               </tr>
@@ -3755,7 +4006,59 @@ function FinalOutingClosure({ data, reload, setToast }) {
         </div>
       )}
 
-      <div className="overflow-x-auto">
+      {(closure.rows || []).length === 0 ? (
+        <EmptyState title="Final closure not calculated yet" body="Calculate final closure when the outing is done. Refunds, collections, and claim adjustments will appear here." />
+      ) : (
+        <div className="mobile-data-list md:hidden">
+          {(closure.rows || []).map((row) => {
+            const form = forms[row.participantId] || { mode: 'UPI', reference: '', note: '' };
+            const isClosed = ['refund-paid', 'amount-collected', 'waived', 'settled'].includes(row.completionStatus);
+            const finalAmount = row.absoluteFinalAmountRounded ?? Math.abs(row.finalAmount);
+            return (
+              <MobileLedgerCard
+                key={`mobile-closure-${row.participantId}`}
+                title={row.name}
+                amount={wholeMoney(finalAmount, currency)}
+                tone={row.finalAction === 'refund-due' ? 'positive' : row.finalAction === 'collect-due' ? 'negative' : 'neutral'}
+                subtitle={finalClosureActionLabel(row.finalAction)}
+                meta={[`Status ${finalClosureStatusLabel(row.completionStatus)}`, row.reference ? `Ref ${row.reference}` : 'No reference']}
+                chips={<span className={statusBadge(row.completionStatus)}>{finalClosureStatusLabel(row.completionStatus)}</span>}
+              >
+                <MobileDetailGrid items={[
+                  { label: 'Pool paid', value: wholeMoney(row.paidToPool, currency), helper: `Exact ${money(row.paidToPool, currency)}` },
+                  { label: 'Pool refund', value: wholeMoney(row.poolRefundShareRounded ?? row.poolRefundShare, currency), className: 'text-emerald-700' },
+                  { label: 'Settlement adj.', value: wholeMoney(row.settlementAdjustmentRounded ?? row.settlementAdjustment, currency), className: Number(row.settlementAdjustment || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700' },
+                  { label: 'Company direct', value: wholeMoney(row.companyDirectReimbursementRounded ?? row.companyDirectReimbursement, currency), className: 'text-rose-700' },
+                  { label: 'Pending collection', value: wholeMoney(row.pendingCollectionRounded ?? row.pendingCollection, currency), className: 'text-rose-700' }
+                ]} />
+                {canManageClosure && row.finalAction !== 'settled' && (
+                  <div className="mobile-inline-form mt-3">
+                    {isClosed ? (
+                      <button className="btn-ghost" type="button" disabled={busy} onClick={() => markClosure(row, 'pending')}>Reopen</button>
+                    ) : (
+                      <>
+                        <div className="grid gap-2 grid-cols-2">
+                          <select className="input" value={form.mode} onChange={(e) => updateForm(row.participantId, { mode: e.target.value })}>
+                            <option>UPI</option>
+                            <option>Cash</option>
+                            <option>Bank transfer</option>
+                            <option>Card</option>
+                            <option>Other</option>
+                          </select>
+                          <input className="input" value={form.reference} onChange={(e) => updateForm(row.participantId, { reference: e.target.value })} placeholder="Reference" />
+                        </div>
+                        <button className="btn-primary w-full" type="button" disabled={busy} onClick={() => markClosure(row, 'completed')}>{row.finalAction === 'refund-due' ? 'Mark refund paid' : 'Mark collected'}</button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </MobileLedgerCard>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-left text-sm">
           <thead className="text-slate-500">
             <tr>
@@ -4978,7 +5281,33 @@ function InvitationsManager({ data, reload, setToast }) {
         </div>
       </form>
 
-      <div className="mt-5 overflow-x-auto">
+      {invitations.length === 0 ? (
+        <EmptyState title="No invites yet" body="Create an invite to tag a user to an outing and send access details." />
+      ) : (
+        <div className="mobile-data-list mt-5 md:hidden">
+          {invitations.map((invite) => (
+            <MobileLedgerCard
+              key={`mobile-invite-${invite.id}`}
+              title={invite.name || invite.email}
+              amount={invite.status}
+              subtitle={invite.email}
+              meta={[invite.eventName || 'No event', inviteEmailStatusLabel(invite.emailStatus)]}
+              chips={<><span className={statusBadge(invite.role)}>{invite.role}</span><span className={statusBadge(invite.status === 'accepted' ? 'approved' : invite.status === 'revoked' ? 'rejected' : 'pending')}>{invite.status}</span></>}
+              actions={(
+                <>
+                  {invite.inviteUrl && invite.status === 'pending' && <button className="btn-ghost" type="button" onClick={() => copyInvite(invite)}>{copiedId === invite.id ? 'Copied' : 'Copy link'}</button>}
+                  {invite.status === 'pending' && <button className="btn-ghost" type="button" disabled={busy} onClick={() => resendInviteEmail(invite)}>Resend email</button>}
+                  {invite.status === 'pending' && <button className="btn-ghost text-rose-700" type="button" disabled={busy} onClick={() => revokeInvite(invite)}>Revoke</button>}
+                </>
+              )}
+            >
+              {invite.emailError && <p className="mobile-ledger-note text-rose-700">{invite.emailError}</p>}
+            </MobileLedgerCard>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-5 hidden overflow-x-auto md:block">
         <table className="min-w-full text-sm">
           <thead>
             <tr className="text-left text-slate-500">
@@ -5113,7 +5442,43 @@ function Roles({ data, reload, setToast }) {
         <div className="mb-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-100">
           Admins can remove app access, restore access, or send a Supabase password reset link. This controls app access, not whether the email account exists in the universe, sadly.
         </div>
-        <div className="overflow-x-auto">
+        <div className="mobile-data-list md:hidden">
+          {users.map((user) => {
+            const disabled = user.accessStatus === 'disabled';
+            const isCurrentUser = currentUser?.id === user.id;
+            return (
+              <MobileLedgerCard
+                key={`mobile-user-${user.id}`}
+                title={user.name || user.email}
+                amount={user.role}
+                tone={disabled ? 'negative' : 'positive'}
+                subtitle={user.email}
+                meta={[disabled ? 'Access disabled' : 'Access active', user.lastLoginAt ? `Last ${new Date(user.lastLoginAt).toLocaleString()}` : 'Not logged in yet']}
+                chips={<span className={disabled ? statusBadge('rejected') : statusBadge('approved')}>{disabled ? 'disabled' : 'active'}</span>}
+              >
+                {currentUser?.role === 'admin' && (
+                  <div className="mobile-inline-form">
+                    <select className="input" value={user.role} disabled={busyUserId === user.id || disabled} onChange={(e) => updateRole(user.id, e.target.value)}>
+                      <option value="admin">Admin</option>
+                      <option value="member">Member</option>
+                      <option value="finance">Finance</option>
+                    </select>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="btn-ghost" type="button" disabled={busyUserId === user.id || !user.email} onClick={() => sendPasswordReset(user)}>Reset password</button>
+                      {disabled ? (
+                        <button className="btn-ghost" type="button" disabled={busyUserId === user.id} onClick={() => restoreAccess(user)}>Restore access</button>
+                      ) : (
+                        <button className="btn-ghost text-rose-700" type="button" disabled={busyUserId === user.id || isCurrentUser} onClick={() => removeAccess(user)}>Remove access</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </MobileLedgerCard>
+            );
+          })}
+        </div>
+
+        <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-500">
